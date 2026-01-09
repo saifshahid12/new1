@@ -1,0 +1,28 @@
+{
+  "scraper_settings": {
+    "base_url": "https://www.linkedin.com/login",
+    "search_query": "Python intern",
+    "keywords": ["Python", "intern", "developer"],
+    "scroll_limit": 5,
+    "max_scroll_attempts": 50,
+    "category": "Posts",
+    "delay_range": [1.5, 4.0]
+  },
+  "human_mimicry": {
+    "mouse_movement": true,
+    "mouse_move_x_range": [-20, 20],
+    "mouse_move_y_range": [-20, 20],
+    "random_scroll": true,
+    "scroll_variation_percent": 10,
+    "random_actions": true,
+    "random_action_probability": 0.3,
+    "typing_speed": [0.05, 0.15]
+  },
+  "proxy": {
+    "enabled": false,
+    "http": "",
+    "https": "",
+    "username": "",
+    "password": ""
+  }
+}
