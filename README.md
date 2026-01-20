@@ -1,6 +1,6 @@
 # Pull Request: Complete Scraping, Filtering, Data Export & Proxy Support  
 **Status:** Ready for Review  
-**Scope:** Issues #2 → #13
+**Scope:** Issues #2 → #21
 
 This PR delivers the **complete end-to-end backend workflow** for the LinkedIn Scraper project — from browser automation to structured data export, including anti-bot human behavior simulation and proxy support.
 
@@ -119,12 +119,30 @@ All browser automation, content extraction, keyword filtering, data persistence,
 
 ### **Issue #19 – Allow User to Select a Particular Category**
 - Users can now select which category to scrape:
-  - Options include `Posts`, `People`, `Jobs`, `Companies`, `Videos`.
+- Options include `Posts`, `People`, `Jobs`, `Companies`, `Videos`.
 - Category is defined in `config.json` under `scraper_settings["category"]`.
 - Scraper extracts only elements from the selected category.
 - Exported CSV and JSON reflect **only the selected category**.
 - Logging displays the selected category for clarity:
 
+
+---
+
+### **Issue #20 - Sort Posts by date (Latest First)
+- Implemented sorting logic based on extracted post timestamps.
+- All posts are ordered chronologically (newest → oldest) before export.
+- Sorting is applied after extraction and keyword filtering.
+- Ensures consistent ordering in both CSV and JSON outputs.
+- Handles missing or malformed timestamps safely without breaking execution.
+- Improves usability for analysis, reporting, and hiring trend evaluation.
+
+---
+### Issue 21: Add LLM Call to Process Content
+- `mock_llm_validate_content()` function in `src/utils.py`
+- Regex-based email extraction
+- Returns structured JSON: `{"email_present": bool, "emails": list}`
+- Integrated in `main.py` for each scraped post
+- Results saved in `post["llm_validation"]`
 
 ---
 
@@ -150,6 +168,8 @@ All browser automation, content extraction, keyword filtering, data persistence,
 | `docs/documentation_task12.md` | Anti-bot human mimicry documentation |
 | `docs/documentation_task13.md` | Proxy integration documentation |
 | `docs/documentation_task19.md` | Allow User to Select a Particular Category
+| `docs/documentation_task20.md` | Post sorting by date documentation
+| `docs/documentation_task21.md` | Add LLM Call to Process Content
 | `README.md` | Updated task status and project overview |
 
 ---
@@ -170,22 +190,24 @@ This PR closes the following issues:
 - **Closes #12 – Anti-Bot Human Mimicry**  
 - **Closes #13 – Proxy Support**  
 - **Closes #19 – Category Selection**
+- **Closes #20 – Sort Posts by Date**
+- **Closes #21 – Add LLM Call to Process Content**
 ---
 
 ## ✅ Project Status
 
+With Issues #2 → #21 completed, the LinkedIn Scraper now supports:
 
-With Issues **#2 → #19** completed, the LinkedIn Scraper now supports:
-
-✅ Automated login  
-✅ Search & infinite scrolling  
-✅ Structured post extraction  
-✅ Keyword-based filtering  
-✅ CSV & JSON export  
-✅ Robust error handling  
-✅ Safe shutdown & stability  
-✅ Human-like anti-bot behavior  
-✅ Optional proxy support for anonymous/location-based scraping  
-✅ User-selectable scraping category (`Posts`, `People`, `Jobs`, `Companies`, `Videos`)  
-
-The backend scraping pipeline is **fully functional, test-covered, and production-ready**.
+✅ Automated login
+✅ Search & infinite scrolling
+✅ Structured post extraction
+✅ Keyword-based filtering
+✅ CSV & JSON export
+✅ Robust error handling
+✅ Safe shutdown & stability
+✅ Human-like anti-bot behavior
+✅ Optional proxy support for anonymous/location-based scraping
+✅ User-selectable scraping category (Posts, People, Jobs, Companies, Videos)
+✅ Chronological post sorting (latest first)
+✅ mock_llm_validate_content()
+The backend scraping pipeline is fully functional, test-covered, and production-ready.
