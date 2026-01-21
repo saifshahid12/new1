@@ -46,7 +46,13 @@ def main():
         scraper.perform_search()
         logging.info("Search completed")
 
-      
+        # Select category from config (Posts / Jobs / etc)
+        scraper.select_category_from_config()
+
+        # Select sort order from config (latest / oldest)
+        scraper.select_sort_from_config()
+
+       
 
 
         # Human-like scrolling
@@ -72,13 +78,8 @@ def main():
             if text and text != "[No Text Content Found]":
                 emails = extract_emails_from_text(text)  # Single source of truth
                 if emails:
-                    post["email"] = ", ".join(emails)
-                    post["email_count"] = len(emails)
-                    post["emails"] = emails
-                else:
-                    post["email"] = "No email found"
-                    post["email_count"] = 0
-                    post["emails"] = []
+                    logging.info(f"Found emails in post: {emails}")
+
             else:
                 post["email"] = "No text content"
                 post["email_count"] = 0

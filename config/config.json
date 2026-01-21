@@ -7,7 +7,8 @@
     "max_scroll_attempts": 50,
     "category":   "Posts",
     "delay_range": [1.5, 4.0],
-    "sort_by_date": "latest"  
+    "sort_by_date": "latest", 
+    "time_filter": "past_hour" 
   },
   "human_mimicry": {
     "mouse_movement": true,

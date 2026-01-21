@@ -51,7 +51,7 @@ class LinkedInScraper:
     POST_CONTAINER = (By.XPATH, "//div[contains(@class, 'feed-shared-update-v2')]")
     POST_AUTHOR_NAME = (By.XPATH, ".//span[@dir='ltr']/span[@aria-hidden='true']")
     POST_TIMESTAMP = (By.XPATH, ".//a[contains(@class, 'update-components-header__actor-action')]")
-    POST_TEXT_EXPAND_BUTTON = (By.XPATH, ".//button[text()[contains(., '...see more')]]")
+    POST_TEXT_EXPAND_BUTTON = (By.XPATH, ".//button[contains(@aria-label, 'see more') or contains(text(), 'see more') or contains(text(), '…see more')]")
     POST_TEXT_CONTENT = (By.XPATH, ".//div[contains(@class, 'update-components-text')]//span[@dir='ltr']")
     POST_URL = (By.XPATH, ".//a[contains(@class, 'update-components-header__actor-action')]")
 
@@ -382,22 +382,33 @@ class LinkedInScraper:
         }
 
             
+       
         # Expand post text  =====================================
         try:
-            # use .find element for posts 
-            see_more_button = post_element.find_element(*self.POST_TEXT_EXPAND_BUTTON)
-
-            # add argumemts click () when script execute 
-            self.driver.execute_script("arguments[0].click();", see_more_button)
-
-            # delay between  find element 
-            self._random_delay(0.3, 0.6)
-
-        except NoSuchElementException:
-
-
-            pass
-
+            # Try multiple XPaths for "see more" button
+            see_more_xpaths = [
+                ".//button[contains(@aria-label, 'see more')]",
+                ".//button[contains(text(), 'see more')]",
+                ".//button[contains(text(), '…see more')]",
+                ".//span[contains(text(), 'see more')]/ancestor::button"
+            ]
+            
+            see_more_button = None
+            for xpath in see_more_xpaths:
+                try:
+                    see_more_button = post_element.find_element(By.XPATH, xpath)
+                    if see_more_button and see_more_button.is_displayed():
+                        break
+                except:
+                    continue
+            
+            if see_more_button:
+                self.driver.execute_script("arguments[0].click();", see_more_button)
+                self._random_delay(0.5, 1.0)
+                logging.debug("Clicked 'see more' button")
+                
+        except Exception as e:
+            logging.debug(f"No 'see more' button found or already expanded: {e}")
 
         # Extract text ===========================================
         try:
@@ -947,3 +958,163 @@ class LinkedInScraper:
         
         # Combine: sorted posts with dates first, then posts without dates
         return posts_with_dates + posts_without_dates
+
+    # ===============================================================================
+
+    def select_category_from_config(self):
+        """Selects LinkedIn category (Posts, Jobs, People, Companies) based on config."""
+
+        category = self.config["scraper_settings"].get("category", "Posts")
+        logging.info(f"Selecting category from config: {category}")
+
+        try:
+            # Wait for page to load after search
+            self._random_delay(5, 7)
+
+            # Click category button using exact text match
+            category_button = WebDriverWait(self.driver, 20).until(
+                EC.element_to_be_clickable((By.XPATH, f"//button[contains(@class, 'search-reusables__filter-pill-button') and contains(., '{category}')]"))
+            )
+
+            self._human_mouse_movement(category_button, moves=2)
+            self.driver.execute_script("arguments[0].click();", category_button)
+
+            logging.info(f"Category selected successfully: {category}")
+            self._random_delay(4, 6)
+
+        except Exception as e:
+            logging.warning(f"Could not select category '{category}': {e}")
+            logging.warning("Trying alternative XPath...")
+            
+            try:
+                # Alternative XPath
+                category_button = WebDriverWait(self.driver, 15).until(
+                    EC.element_to_be_clickable((By.XPATH, f"//button[.//span[text()='{category}']]"))
+                )
+                self.driver.execute_script("arguments[0].click();", category_button)
+                logging.info(f"Category selected with alternative method: {category}")
+                self._random_delay(4, 6)
+            except Exception as e2:
+                logging.error(f"Failed to select category with both methods: {e2}")
+
+    # ==================================================================================
+
+    def select_sort_from_config(self):
+        """Selects sorting option (latest / oldest / none) based on config."""
+
+        sort_order = self.config["scraper_settings"].get("sort_by_date", "none")
+        logging.info(f"Selecting sort order from config: {sort_order}")
+
+        if sort_order.lower() == "none":
+            logging.info("Sort order is 'none' — skipping sort selection")
+            return
+
+        try:
+            # Wait for page to stabilize
+            self._random_delay(3, 5)
+            
+            # Scroll to top
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            self._random_delay(1, 2)
+            
+            # Find sort button
+            all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            sort_button = None
+            
+            for button in all_buttons:
+                aria_label = button.get_attribute("aria-label")
+                if aria_label and "sort by filter" in aria_label.lower() and "cancel" not in aria_label.lower():
+                    sort_button = button
+                    logging.info(f"Found sort button: {aria_label}")
+                    break
+            
+            if not sort_button:
+                logging.warning("Sort button not found")
+                return
+
+            # Click sort button
+            self._human_mouse_movement(sort_button, moves=1)
+            self.driver.execute_script("arguments[0].click();", sort_button)
+            logging.info("Sort dropdown opened")
+            self._random_delay(3, 5)
+
+            # Use LinkedIn's actual text: "Latest" or "Top match"
+            target_text = "Latest" if sort_order.lower() == "latest" else "Top match"
+            logging.info(f"Looking for option: {target_text}")
+            
+            # Click the label containing the text
+            try:
+                option_label = self.driver.find_element(By.XPATH, f"//label[contains(., '{target_text}')]")
+                self._human_mouse_movement(option_label, moves=1)
+                self.driver.execute_script("arguments[0].click();", option_label)
+                logging.info(f"Sort option selected: {target_text}")
+                self._random_delay(2, 3)
+            except Exception as e:
+                logging.warning(f"Could not click '{target_text}': {e}")
+                return
+            
+            # Click "Show results" button to apply filter
+            try:
+                show_button = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Show') and contains(., 'result')]"))
+                )
+                self._human_mouse_movement(show_button, moves=1)
+                self.driver.execute_script("arguments[0].click();", show_button)
+                logging.info("Clicked 'Show results' - sort filter applied")
+                self._random_delay(5, 7)
+            except Exception as e:
+                logging.warning(f"'Show results' button not found: {e}")
+                # Filter might auto-apply, continue anyway
+                self._random_delay(3, 5)
+
+        except Exception as e:
+            logging.warning(f"Could not select sort: {e}")
+            logging.info("Posts will be sorted after scraping using timestamps")
+    # ===============================================================================
+    def select_time_filter_from_config(self):
+        """Selects time filter (Past 24 hours, Past Week, Past Month) based on config."""
+        
+        time_filter = self.config["scraper_settings"].get("time_filter", "none")
+        
+        if time_filter.lower() == "none":
+            logging.info("Time filter is 'none' — skipping time filter selection")
+            return
+        
+        logging.info(f"Selecting time filter from config: {time_filter}")
+        
+        try:
+            # Click "Date posted" dropdown
+            date_posted_button = WebDriverWait(self.driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Date posted')]"))
+            )
+            
+            self._human_mouse_movement(date_posted_button, moves=2)
+            date_posted_button.click()
+            self._random_delay(2, 3)
+            
+            # Map config values to LinkedIn options
+            time_map = {
+                "past_hour": "Past 24 hours",
+                "past_24_hours": "Past 24 hours",
+                "past_week": "Past week",
+                "past_month": "Past month"
+            }
+            
+            option_text = time_map.get(time_filter.lower(), "Past 24 hours")
+            
+            # Click the time filter option
+            time_option = WebDriverWait(self.driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, f"//span[text()='{option_text}']"))
+            )
+            
+            self._human_mouse_movement(time_option, moves=2)
+            time_option.click()
+            
+            logging.info(f"Time filter selected successfully: {option_text}")
+            self._random_delay(3, 5)
+            
+        except Exception as e:
+            logging.warning(f"Could not select time filter '{time_filter}': {e}")
+
+
+
