@@ -999,122 +999,379 @@ class LinkedInScraper:
 
     # ==================================================================================
 
-    def select_sort_from_config(self):
-        """Selects sorting option (latest / oldest / none) based on config."""
-
-        sort_order = self.config["scraper_settings"].get("sort_by_date", "none")
-        logging.info(f"Selecting sort order from config: {sort_order}")
-
-        if sort_order.lower() == "none":
-            logging.info("Sort order is 'none' — skipping sort selection")
-            return
-
+    def apply_all_filters(self):
+        """
+        Opens 'All filters' panel and applies Sort by and Date posted filters from config.
+        
+        Workflow:
+            1. Click "All filters" button to open filter panel
+            2. Select "Sort by" option based on category and config
+               - Posts: "Latest" or "Top match"
+               - Jobs: "Most recent" or "Most relevant"
+               - People/Companies: Category-specific options
+            3. Select "Date posted" option (Past 24 hours/week/month) based on config
+            4. Click "Show results" button to apply filters
+            5. Wait for page to reload with filtered results
+        
+        Config Dependencies:
+            - scraper_settings.category: "Posts", "Jobs", "People", or "Companies"
+            - scraper_settings.sort_by_date: "latest" or "oldest"
+            - scraper_settings.time_filter: "past_24_hours", "past_week", "past_month", or "none"
+        
+        Raises:
+            TimeoutException: If filter elements don't load within timeout
+            NoSuchElementException: If expected filter options not found
+        """
         try:
-            # Wait for page to stabilize
-            self._random_delay(3, 5)
+            logging.info("Opening 'All filters' panel...")
             
-            # Scroll to top
+            # Scroll to top to ensure button is visible
             self.driver.execute_script("window.scrollTo(0, 0);")
-            self._random_delay(1, 2)
-            
-            # Find sort button
-            all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
-            sort_button = None
-            
-            for button in all_buttons:
-                aria_label = button.get_attribute("aria-label")
-                if aria_label and "sort by filter" in aria_label.lower() and "cancel" not in aria_label.lower():
-                    sort_button = button
-                    logging.info(f"Found sort button: {aria_label}")
-                    break
-            
-            if not sort_button:
-                logging.warning("Sort button not found")
-                return
-
-            # Click sort button
-            self._human_mouse_movement(sort_button, moves=1)
-            self.driver.execute_script("arguments[0].click();", sort_button)
-            logging.info("Sort dropdown opened")
-            self._random_delay(3, 5)
-
-            # Use LinkedIn's actual text: "Latest" or "Top match"
-            target_text = "Latest" if sort_order.lower() == "latest" else "Top match"
-            logging.info(f"Looking for option: {target_text}")
-            
-            # Click the label containing the text
-            try:
-                option_label = self.driver.find_element(By.XPATH, f"//label[contains(., '{target_text}')]")
-                self._human_mouse_movement(option_label, moves=1)
-                self.driver.execute_script("arguments[0].click();", option_label)
-                logging.info(f"Sort option selected: {target_text}")
-                self._random_delay(2, 3)
-            except Exception as e:
-                logging.warning(f"Could not click '{target_text}': {e}")
-                return
-            
-            # Click "Show results" button to apply filter
-            try:
-                show_button = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Show') and contains(., 'result')]"))
-                )
-                self._human_mouse_movement(show_button, moves=1)
-                self.driver.execute_script("arguments[0].click();", show_button)
-                logging.info("Clicked 'Show results' - sort filter applied")
-                self._random_delay(5, 7)
-            except Exception as e:
-                logging.warning(f"'Show results' button not found: {e}")
-                # Filter might auto-apply, continue anyway
-                self._random_delay(3, 5)
-
-        except Exception as e:
-            logging.warning(f"Could not select sort: {e}")
-            logging.info("Posts will be sorted after scraping using timestamps")
-    # ===============================================================================
-    def select_time_filter_from_config(self):
-        """Selects time filter (Past 24 hours, Past Week, Past Month) based on config."""
-        
-        time_filter = self.config["scraper_settings"].get("time_filter", "none")
-        
-        if time_filter.lower() == "none":
-            logging.info("Time filter is 'none' — skipping time filter selection")
-            return
-        
-        logging.info(f"Selecting time filter from config: {time_filter}")
-        
-        try:
-            # Click "Date posted" dropdown
-            date_posted_button = WebDriverWait(self.driver, 15).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Date posted')]"))
-            )
-            
-            self._human_mouse_movement(date_posted_button, moves=2)
-            date_posted_button.click()
             self._random_delay(2, 3)
             
-            # Map config values to LinkedIn options
-            time_map = {
-                "past_hour": "Past 24 hours",
-                "past_24_hours": "Past 24 hours",
-                "past_week": "Past week",
-                "past_month": "Past month"
-            }
+            # Get category from config to determine correct sort options
+            category = self.config["scraper_settings"].get("category", "Posts")
+            logging.info(f"Category detected: {category}")
             
-            option_text = time_map.get(time_filter.lower(), "Past 24 hours")
+            # Step 1: Click "All filters" button with multiple strategies
+            all_filters_button = None
             
-            # Click the time filter option
-            time_option = WebDriverWait(self.driver, 15).until(
-                EC.element_to_be_clickable((By.XPATH, f"//span[text()='{option_text}']"))
-            )
+            # Try multiple XPath strategies
+            all_filters_xpaths = [
+                "//button[contains(text(), 'All filters')]",
+                "//button[contains(@aria-label, 'Show all filters')]",
+                "//button[contains(., 'All filters')]",
+                "//button[.//span[contains(text(), 'All filters')]]"
+            ]
             
-            self._human_mouse_movement(time_option, moves=2)
-            time_option.click()
+            for xpath in all_filters_xpaths:
+                try:
+                    all_filters_button = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath))
+                    )
+                    if all_filters_button:
+                        break
+                except:
+                    continue
             
-            logging.info(f"Time filter selected successfully: {option_text}")
-            self._random_delay(3, 5)
+            if not all_filters_button:
+                logging.error("'All filters' button not found on page")
+                return
             
+            # Click the button
+            self._human_mouse_movement(all_filters_button, moves=2)
+            self.driver.execute_script("arguments[0].click();", all_filters_button)
+            logging.info("'All filters' panel opened")
+            
+            # Wait for filter panel to fully load
+            self._random_delay(4, 6)
+            
+            # Verify panel is open by checking for "Show results" button
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Show') and contains(., 'result')]"))
+                )
+                logging.info("Filter panel confirmed open")
+            except TimeoutException:
+                logging.warning("Filter panel may not have opened properly")
+            
+            # =====================================================================
+            # Step 2: Apply "Sort by" filter (Category-aware)
+            # =====================================================================
+            sort_order = self.config["scraper_settings"].get("sort_by_date", "latest")
+            
+            if sort_order.lower() != "none":
+                logging.info(f"Applying Sort by: {sort_order} for category: {category}")
+                
+                # Map config value to LinkedIn's actual text based on category
+                sort_text = self._get_sort_text_for_category(category, sort_order)
+                
+                logging.info(f"Sort text to select: '{sort_text}'")
+                
+                try:
+                    # Multiple strategies to find and click sort option
+                    sort_xpaths = [
+                        f"//label[contains(., '{sort_text}')]",
+                        f"//span[text()='{sort_text}']/ancestor::label",
+                        f"//span[contains(text(), '{sort_text}')]/ancestor::label",
+                        f"//input[@value='{sort_text.upper()}']/following-sibling::label",
+                        f"//fieldset//label[contains(., '{sort_text}')]"
+                    ]
+                    
+                    sort_clicked = False
+                    for xpath in sort_xpaths:
+                        try:
+                            sort_element = self.driver.find_element(By.XPATH, xpath)
+                            self._human_mouse_movement(sort_element, moves=1)
+                            self.driver.execute_script("arguments[0].click();", sort_element)
+                            logging.info(f"Sort by '{sort_text}' selected successfully")
+                            sort_clicked = True
+                            self._random_delay(1, 2)
+                            break
+                        except:
+                            continue
+                    
+                    if not sort_clicked:
+                        logging.warning(f"Could not select sort option '{sort_text}'")
+                    
+                except Exception as e:
+                    logging.warning(f"Error selecting sort: {e}")
+            
+            # =====================================================================
+            # Step 3: Apply "Date posted" filter
+            # =====================================================================
+            time_filter = self.config["scraper_settings"].get("time_filter", "none")
+            
+            if time_filter.lower() != "none":
+                logging.info(f"Applying Date posted: {time_filter}")
+                
+                # Map config value to LinkedIn's actual text
+                time_map = {
+                    "past_hour": "Past 24 hours",
+                    "past_24_hours": "Past 24 hours",
+                    "past_week": "Past week",
+                    "past_month": "Past month"
+                }
+                
+                date_text = time_map.get(time_filter.lower(), "Past 24 hours")
+                
+                try:
+                    # Multiple strategies to find and click date filter
+                    date_xpaths = [
+                        f"//label[contains(., '{date_text}')]",
+                        f"//span[text()='{date_text}']/ancestor::label",
+                        f"//span[contains(text(), '{date_text}')]/ancestor::label",
+                        f"//fieldset//label[contains(., '{date_text}')]"
+                    ]
+                    
+                    date_clicked = False
+                    for xpath in date_xpaths:
+                        try:
+                            date_element = self.driver.find_element(By.XPATH, xpath)
+                            self._human_mouse_movement(date_element, moves=1)
+                            self.driver.execute_script("arguments[0].click();", date_element)
+                            logging.info(f"Date posted '{date_text}' selected successfully")
+                            date_clicked = True
+                            self._random_delay(1, 2)
+                            break
+                        except:
+                            continue
+                    
+                    if not date_clicked:
+                        logging.warning(f"Could not select date filter '{date_text}'")
+                    
+                except Exception as e:
+                    logging.warning(f"Error selecting date filter: {e}")
+            
+            # =====================================================================
+            # Step 4: Click "Show results" button and wait for page reload
+            # =====================================================================
+            try:
+                # Store current URL before clicking "Show results"
+                current_url = self.driver.current_url
+                logging.info(f"Current URL before applying filters: {current_url}")
+                
+                # Multiple XPath strategies for "Show results" button
+                show_results_xpaths = [
+                    "//button[contains(., 'Show') and contains(., 'result')]",
+                    "//button[contains(text(), 'Show')]",
+                    "//button[@type='submit' and contains(., 'Show')]",
+                    "//button[.//span[contains(text(), 'Show')]]"
+                ]
+                
+                show_results_button = None
+                for xpath in show_results_xpaths:
+                    try:
+                        show_results_button = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable((By.XPATH, xpath))
+                        )
+                        if show_results_button:
+                            break
+                    except:
+                        continue
+                
+                if show_results_button:
+                    self._human_mouse_movement(show_results_button, moves=1)
+                    self.driver.execute_script("arguments[0].click();", show_results_button)
+                    logging.info("Clicked 'Show results' button")
+                    
+                    # ============================================================
+                    # CRITICAL: Wait for page to reload with filtered results
+                    # ============================================================
+                    
+                    # Wait for URL to change (indicates page navigation)
+                    try:
+                        WebDriverWait(self.driver, 15).until(
+                            lambda driver: driver.current_url != current_url
+                        )
+                        logging.info("Page URL changed - filters applied, page reloaded")
+                    except TimeoutException:
+                        logging.warning("URL did not change - filters may have been applied without page reload")
+                    
+                    # Wait for filter panel to close (indicates filter application complete)
+                    self._random_delay(3, 5)
+                    
+                    # Wait for new results to load based on category
+                    if category.lower() == "jobs":
+                        # For Jobs, wait for job cards to load
+                        try:
+                            WebDriverWait(self.driver, 20).until(
+                                EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'jobs-search-results__list')]"))
+                            )
+                            logging.info("Jobs results list loaded")
+                        except TimeoutException:
+                            logging.warning("Jobs results list did not load - trying alternative selector")
+                            try:
+                                WebDriverWait(self.driver, 10).until(
+                                    EC.presence_of_element_located((By.XPATH, "//ul[contains(@class, 'jobs-search-results__list')]//li"))
+                                )
+                                logging.info("Job list items found")
+                            except TimeoutException:
+                                logging.warning("Could not confirm jobs loaded")
+                    
+                    elif category.lower() == "posts":
+                        # For Posts, wait for post containers
+                        try:
+                            WebDriverWait(self.driver, 20).until(
+                                EC.presence_of_element_located(self.POST_CONTAINER)
+                            )
+                            logging.info("Posts loaded after filter")
+                        except TimeoutException:
+                            logging.warning("Posts did not load after filter")
+                    
+                    else:
+                        # For People/Companies, wait for search results
+                        try:
+                            WebDriverWait(self.driver, 20).until(
+                                EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'search-results-container')]"))
+                            )
+                            logging.info(f"{category} results loaded")
+                        except TimeoutException:
+                            logging.warning(f"{category} results may not have loaded")
+                    
+                    # Final wait to ensure page is stable
+                    self._random_delay(4, 6)
+                    
+                    # Scroll to top of results to prepare for scrolling
+                    self.driver.execute_script("window.scrollTo(0, 0);")
+                    self._random_delay(1, 2)
+                    
+                    new_url = self.driver.current_url
+                    logging.info(f"New URL after filters: {new_url}")
+                    logging.info("Filters applied successfully - page ready for scrolling")
+                    
+                else:
+                    logging.error("'Show results' button not found")
+                
+            except Exception as e:
+                logging.error(f"Could not click 'Show results' button: {e}")
+        
         except Exception as e:
-            logging.warning(f"Could not select time filter '{time_filter}': {e}")
-
-
-
+            logging.error(f"Error in apply_all_filters: {e}", exc_info=True)
+            # Don't raise - allow scraping to continue even if filters fail
+    
+    # ===============================================================================
+    
+    def _get_sort_text_for_category(self, category: str, sort_order: str) -> str:
+        """
+        Returns the correct sort option text based on category and sort order.
+        
+        LinkedIn uses different sort terminology for different categories:
+        - Posts: "Latest" vs "Top match"
+        - Jobs: "Most recent" vs "Most relevant"
+        - People: "Recently added" vs "Most relevant"
+        - Companies: "Most recent" vs "Most relevant"
+        
+        Args:
+            category (str): Category name (Posts, Jobs, People, Companies)
+            sort_order (str): Sort order from config ("latest" or "oldest")
+        
+        Returns:
+            str: LinkedIn's actual sort option text for the given category
+        
+        Example:
+            >>> _get_sort_text_for_category("Jobs", "latest")
+            "Most recent"
+            >>> _get_sort_text_for_category("Posts", "latest")
+            "Latest"
+        """
+        # Define category-specific sort text mappings
+        sort_mappings = {
+            "Posts": {
+                "latest": "Latest",
+                "oldest": "Top match"
+            },
+            "Jobs": {
+                "latest": "Most recent",
+                "oldest": "Most relevant"
+            },
+            "People": {
+                "latest": "Recently added",
+                "oldest": "Most relevant"
+            },
+            "Companies": {
+                "latest": "Most recent",
+                "oldest": "Most relevant"
+            }
+        }
+        
+        # Get category-specific mapping (default to Posts if not found)
+        category_map = sort_mappings.get(category, sort_mappings["Posts"])
+        
+        # Get sort text (default to "latest" option if sort_order not found)
+        sort_text = category_map.get(sort_order.lower(), category_map["latest"])
+        
+        return sort_text
+    
+    # ===============================================================================
+    
+    def _get_sort_text_for_category(self, category: str, sort_order: str) -> str:
+        """
+        Returns the correct sort option text based on category and sort order.
+        
+        LinkedIn uses different sort terminology for different categories:
+        - Posts: "Latest" vs "Top match"
+        - Jobs: "Most recent" vs "Most relevant"
+        - People: "Recently added" vs "Most relevant"
+        - Companies: "Most recent" vs "Most relevant"
+        
+        Args:
+            category (str): Category name (Posts, Jobs, People, Companies)
+            sort_order (str): Sort order from config ("latest" or "oldest")
+        
+        Returns:
+            str: LinkedIn's actual sort option text for the given category
+        
+        Example:
+            >>> _get_sort_text_for_category("Jobs", "latest")
+            "Most recent"
+            >>> _get_sort_text_for_category("Posts", "latest")
+            "Latest"
+        """
+        # Define category-specific sort text mappings
+        sort_mappings = {
+            "Posts": {
+                "latest": "Latest",
+                "oldest": "Top match"
+            },
+            "Jobs": {
+                "latest": "Most recent",
+                "oldest": "Most relevant"
+            },
+            "People": {
+                "latest": "Recently added",
+                "oldest": "Most relevant"
+            },
+            "Companies": {
+                "latest": "Most recent",
+                "oldest": "Most relevant"
+            }
+        }
+        
+        # Get category-specific mapping (default to Posts if not found)
+        category_map = sort_mappings.get(category, sort_mappings["Posts"])
+        
+        # Get sort text (default to "latest" option if sort_order not found)
+        sort_text = category_map.get(sort_order.lower(), category_map["latest"])
+        
+        return sort_text
