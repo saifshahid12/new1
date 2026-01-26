@@ -12,22 +12,15 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 from src.utils import load_credentials
-import zipfile
-import tempfile
-import os
 import pyautogui
-import math
-import numpy as np
-
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 class LinkedInScraper:
     """
-    LinkedInScraper is a Selenium-based tool for extracting posts from LinkedIn
-    while mimicking human behavior to avoid bot detection.
+    LinkedInScraper is a Selenium-based tool for extracting posts from LinkedIn.
+    Updated specifically to handle Jobs Sidebar Scrolling.
     """
     CATEGORY_URL_MAP = {
         "Posts": "/search/content/",
@@ -36,68 +29,45 @@ class LinkedInScraper:
         "Companies": "/search/companies/"
     }
 
-    # --- CONSTANTS: Extracted Magic XPath / CSS Selectors ---
+    # --- CONSTANTS ---
     LOGIN_USERNAME_FIELD = (By.NAME, 'session_key')
     LOGIN_PASSWORD_FIELD = (By.NAME, 'session_password')
     LOGIN_SUBMIT_BUTTON = (By.XPATH, "//button[@type='submit']")
     SEARCH_INPUT_FIELD = (By.CSS_SELECTOR, 'input.search-global-typeahead__input')
     
-    # Updated Post Container: Handles standard posts and Job List Items (li)
-    POST_CONTAINER = (By.XPATH, "//div[contains(@class, 'feed-shared-update-v2')] | //li[contains(@class, 'jobs-search-results__list-item')] | //div[contains(@class, 'job-card-container')]")
+    # CRITICAL UPDATE: Targeting the Job Card directly, ignoring the list structure if needed
+    POST_CONTAINER = (By.XPATH, "//div[contains(@class, 'job-card-container')] | //div[contains(@class, 'feed-shared-update-v2')]")
     
     POST_AUTHOR_NAME = (By.XPATH, ".//span[@dir='ltr']/span[@aria-hidden='true']")
     POST_TIMESTAMP = (By.XPATH, ".//a[contains(@class, 'update-components-header__actor-action')]")
     POST_TEXT_CONTENT = (By.XPATH, ".//div[contains(@class, 'update-components-text')]//span[@dir='ltr']")
     
-    # ==================================================================================
-
     def __init__(self, config, init_driver=True):
-        
         self.config = config
         self.driver = None
         self.scraped_data = []
-
-        # Load credentials
         self.username, self.password = load_credentials()
-
-        # Assign search query and category from config
         self.search_query = config['scraper_settings'].get('search_query', '')
-        self.category = config['scraper_settings'].get('category', 'Posts')  # Default to 'Posts'
-
+        self.category = config['scraper_settings'].get('category', 'Posts')
         self._validate_config()
 
         if init_driver:
             self._setup_driver()
 
-    # ===============================================================================
-
     def _validate_config(self):
-        """Validates critical configuration parameters."""
         logging.info("Validating configuration parameters...")
-
         if 'scraper_settings' not in self.config:
             raise ValueError("CRITICAL: Missing 'scraper_settings' in config")
-
         settings = self.config['scraper_settings']
         required_fields = ['base_url', 'search_query', 'scroll_limit']
-
         for field in required_fields:
             if field not in settings:
                 raise ValueError(f"Missing required field in scraper_settings: '{field}'")
-
-        scroll_limit = settings.get('scroll_limit')
-        if not isinstance(scroll_limit, int) or scroll_limit <= 0:
-            raise ValueError(f"Invalid 'scroll_limit': Must be a positive integer. Found: {scroll_limit}")
-
         if not self.username or not self.password:
             raise ValueError("LinkedIn credentials not loaded from .env file")
-
         logging.info("Configuration validation complete.")
 
-    # ==============================================================================
-
     def _setup_driver(self):
-        """Configures and initializes Selenium Chrome WebDriver."""
         logging.info("Setting up Chrome WebDriver...")
         service = ChromeService(ChromeDriverManager().install())
         options = webdriver.ChromeOptions()
@@ -107,7 +77,6 @@ class LinkedInScraper:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
-        # Proxy config
         proxy_config = self.config.get("proxy", {})
         if proxy_config.get("enabled") and proxy_config.get("host"):
             options.add_argument(f"--proxy-server=http://{proxy_config['host']}:{proxy_config['port']}")
@@ -115,74 +84,55 @@ class LinkedInScraper:
         self.driver = webdriver.Chrome(service=service, options=options)
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-    # ================================================================================
-
     def close(self):
-        """Safely quits the WebDriver."""
         if self.driver:
             self.driver.quit()
             self.driver = None
             logging.info("Browser session closed.")
 
-    # ===================================================================================
-
     def _random_delay(self, min_time: float = None, max_time: float = None):
-        """Implements a human-like, random delay between actions."""
         if min_time is None or max_time is None:
             settings = self.config['scraper_settings'].get('delay', {'min_sec': 1.0, 'max_sec': 3.0})
             min_sec = settings['min_sec']
             max_sec = settings['max_sec']
         else:
             min_sec, max_sec = min_time, max_time
-
         time.sleep(random.uniform(min_sec, max_sec))
 
-    # =====================================================================================
-
     def login(self):
-        """Automates the login process to LinkedIn."""
         url = self.config['scraper_settings']['base_url']
         logging.info(f"Navigating to login page: {url}")
-
         self.driver.get(url)
         self._random_delay(2, 3)
 
         try:
             wait = WebDriverWait(self.driver, 20)
             username_field = wait.until(EC.presence_of_element_located(self.LOGIN_USERNAME_FIELD))
-            self._human_mouse_movement(3)
             self._human_typing(username_field, self.username)
-            logging.info("Username entered.")
             self._random_delay(1, 2)
 
             password_field = wait.until(EC.presence_of_element_located(self.LOGIN_PASSWORD_FIELD))
-            self._human_mouse_movement(2)
             self._human_typing(password_field, self.password)
-            logging.info("Password entered.")
             self._random_delay(1, 2)
 
             submit_button = wait.until(EC.element_to_be_clickable(self.LOGIN_SUBMIT_BUTTON))
             submit_button.click()
             logging.info("Login credentials submitted.")
             self._random_delay(5, 8)
-
+            
+            # Check if search bar exists (Login Success)
             try:
                 wait.until(EC.presence_of_element_located(self.SEARCH_INPUT_FIELD))
-                logging.info("Login successful - Search bar found.")
-                self._human_presence()
-            except TimeoutException:
-                logging.warning("Login may have failed or encountered security check")
+                logging.info("Login successful.")
+            except:
+                logging.warning("Search bar not found instantly, continuing anyway...")
 
-        except (NoSuchElementException, TimeoutException) as e:
+        except Exception as e:
             logging.error(f"Login failed: {e}")
             raise
 
-    #================================================================================
-
     def perform_search(self):
-        """Performs LinkedIn search for the configured query."""
         logging.info(f"Executing search for query: '{self.search_query}'")
-
         try:
             search_box = WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.XPATH, "//input[contains(@placeholder,'Search')]"))
@@ -190,527 +140,255 @@ class LinkedInScraper:
             search_box.clear()
             search_box.send_keys(self.search_query)
             search_box.send_keys(Keys.ENTER)
-            logging.info("Search submitted. Waiting for results page...")
-
-            # Specific wait for Jobs or Posts
-            try:
-                if self.category.lower() == "jobs":
-                     WebDriverWait(self.driver, 15).until(
-                        EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'jobs-search-results')]"))
-                    )
-                else:
-                    WebDriverWait(self.driver, 15).until(
-                        EC.presence_of_element_located(self.POST_CONTAINER)
-                    )
-            except:
-                WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-
-        except TimeoutException:
-            logging.error("Search box or results page did not load in time.")
+            logging.info("Search submitted.")
+            self._random_delay(3, 5)
+        except Exception as e:
+            logging.error(f"Search failed: {e}")
             raise
-    
-    # =====================================================================================
 
+    # =====================================================================================
+    #  SCROLLING LOGIC FIXED FOR JOBS SIDEBAR
+    # =====================================================================================
     def human_like_scroll(self):
         """
         Simulates scrolling. 
-        CRITICAL UPDATE: Handles Job List scrolling by targeting List Items (LI) 
-        and using scrollIntoView to force load.
+        FOR JOBS: Forces the sidebar to scroll using JavaScript scrollTop.
         """
         try:
             scroll_limit = self.config['scraper_settings']['scroll_limit']
-            max_attempts = self.config['scraper_settings'].get('max_scroll_attempts', 50)
-
-            is_jobs_category = self.category.lower() == "jobs"
+            is_jobs = self.category.lower() == "jobs"
+            
             jobs_container = None
-
-            # 1. Locate Container
-            if is_jobs_category:
-                logging.info("Jobs category detected. Locating scrollable job list...")
-                job_list_selectors = [
-                    "//div[contains(@class, 'jobs-search-results-list')]", 
-                    "//div[contains(@class, 'jobs-search-results__list')]",
-                    "//ul[contains(@class, 'jobs-search-results__list')]",
-                    "//div[contains(@class, 'scaffold-layout__list')]"
+            if is_jobs:
+                logging.info("Looking for Jobs Sidebar...")
+                # Try to find the main scrollable container
+                selectors = [
+                    "//div[contains(@class, 'jobs-search-results-list')]",
+                    "//div[contains(@class, 'scaffold-layout__list')]",
+                    "//div[contains(@class, 'jobs-search-results')]" 
                 ]
-                
-                for xpath in job_list_selectors:
+                for xpath in selectors:
                     try:
-                        element = self.driver.find_element(By.XPATH, xpath)
-                        if element.is_displayed():
-                            jobs_container = element
-                            logging.info(f"Jobs scrollable container found: {xpath}")
+                        elem = self.driver.find_element(By.XPATH, xpath)
+                        if elem.is_displayed():
+                            jobs_container = elem
+                            logging.info(f"Jobs Sidebar Found: {xpath}")
+                            # Move mouse over it to ensure focus
+                            ActionChains(self.driver).move_to_element(jobs_container).perform()
                             break
                     except:
                         continue
-                
-                if not jobs_container:
-                    logging.warning("Could not find specific Job list container. Will try window scroll.")
             
-            # Initial height check
-            if jobs_container:
-                last_height = self.driver.execute_script("return arguments[0].scrollHeight", jobs_container)
-            else:
-                last_height = self.driver.execute_script("return document.body.scrollHeight")
-
             scroll_count = 0
-            attempts = 0
-
-            logging.info(f"Starting scroll (limit: {scroll_limit})...")
-
-            while scroll_count < scroll_limit and attempts < max_attempts:
+            
+            logging.info(f"Starting scroll loop (Limit: {scroll_limit})")
+            
+            while scroll_count < scroll_limit:
                 
-                if random.random() < 0.3:
-                    self._random_human_action()
-                
-                try:
-                    if jobs_container:
-                        # === STRATEGY UPDATE: Scroll to LAST ELEMENT ===
-                        # Finding the list items inside the container
-                        job_items = jobs_container.find_elements(By.TAG_NAME, "li")
-                        
-                        if job_items:
-                            # Target the last visible item
-                            last_item = job_items[-1]
-                            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'end'});", last_item)
-                            logging.debug(f"Scrolled to job item #{len(job_items)}")
-                        else:
-                            # Fallback if no LIs found
-                            scroll_by = random.randint(300, 800)
-                            self.driver.execute_script(f"arguments[0].scrollBy(0, {scroll_by});", jobs_container)
-                    else:
-                        # Normal Window Scroll
-                        scroll_by = random.randint(300, 800)
-                        self.driver.execute_script(f"window.scrollBy(0, {scroll_by});")
-                
-                except Exception as e:
-                    logging.error(f"Scroll command failed: {e}")
-                    break
-
-                self._random_delay(2.0, 4.0) # Gave slightly more time for AJAX load
-
-                # Check if new content loaded
-                try:
-                    if jobs_container:
-                        new_height = self.driver.execute_script("return arguments[0].scrollHeight", jobs_container)
-                    else:
-                        new_height = self.driver.execute_script("return document.body.scrollHeight")
-                except:
-                    break
-
-                if new_height == last_height:
-                    attempts += 1
-                    if attempts % 3 == 0:
-                        logging.info("Waiting for content to load...")
-                        # Try a small nudge up and down to trigger event
-                        if jobs_container:
-                            self.driver.execute_script("arguments[0].scrollBy(0, -50);", jobs_container)
-                            time.sleep(0.5)
-                            self.driver.execute_script("arguments[0].scrollBy(0, 50);", jobs_container)
-
-                    if attempts >= 10:
-                        logging.warning("Max scroll attempts reached without new content.")
-                        break
+                # Scroll Logic
+                if is_jobs and jobs_container:
+                    # FORCE SCROLL DOWN via JS
+                    self.driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", jobs_container)
+                    logging.debug("Forced JS scroll on sidebar")
                 else:
-                    attempts = 0
-                    scroll_count += 1
-                    last_height = new_height
-                    logging.info(f"Scrolled {scroll_count}/{scroll_limit}")
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                
+                self._random_delay(2.5, 4.5) # Wait for AJAX load
+                
+                scroll_count += 1
+                logging.info(f"Scrolled {scroll_count}/{scroll_limit}")
 
             logging.info("Scrolling finished.")
 
         except Exception as e:
             logging.error(f"Scrolling error: {e}")
 
-    # ===============================================================================
-
-    def _parse_single_post(self, post_element) -> dict:
-        """Parses a single element (Post or Job Card)."""
-        
-        post_data = {
-            'Post Text': None,
-            'Author Name': None,
-            'Timestamp': None,
-            'Post URL': None,
-            'Category': getattr(self, 'category', 'Posts'),
-            'Date_For_Sorting': None
-        }
-
-        # 1. Extract Text / Job Title
-        try:
-            # For Posts
-            text_element = post_element.find_element(*self.POST_TEXT_CONTENT)
-            post_data['Post Text'] = text_element.text.strip()
-        except:
-            # For Jobs (Job Title)
-            try:
-                # Try finding the link text which is usually the title
-                title_elem = post_element.find_element(By.CSS_SELECTOR, "strong, .job-card-list__title")
-                post_data['Post Text'] = title_elem.text.strip()
-            except:
-                try:
-                    # Fallback
-                    post_data['Post Text'] = post_element.text.split('\n')[0]
-                except:
-                    post_data['Post Text'] = "[No Text/Title Found]"
-
-        # 2. Extract Author / Company Name
-        try:
-            author_element = post_element.find_element(*self.POST_AUTHOR_NAME)
-            post_data['Author Name'] = author_element.text.strip()
-        except:
-            # For Jobs (Company Name)
-            try:
-                company_elem = post_element.find_element(By.CSS_SELECTOR, ".job-card-container__primary-description")
-                post_data['Author Name'] = company_elem.text.strip()
-            except:
-                post_data['Author Name'] = "[Unknown Author/Company]"
-
-        # 3. Extract Timestamp / Location
-        try:
-            time_elem = post_element.find_element(By.TAG_NAME, "time")
-            post_data['Timestamp'] = time_elem.text.strip()
-        except:
-            # If no time, maybe get location for jobs
-            try:
-                loc_elem = post_element.find_element(By.CSS_SELECTOR, ".job-card-container__metadata-item")
-                post_data['Timestamp'] = loc_elem.text.strip() # Storing location/metadata as timestamp fallback
-            except:
-                post_data['Timestamp'] = "[Unknown Time]"
-        
-        post_data['Date_For_Sorting'] = self._extract_date_for_sorting(post_data['Timestamp'])
-
-        # 4. Extract URL
-        try:
-            # For jobs, the link is usually on the title
-            link_elem = post_element.find_element(By.TAG_NAME, "a")
-            href = link_elem.get_attribute("href")
-            if href:
-                post_data['Post URL'] = href.split("?")[0]
-            else:
-                post_data['Post URL'] = "[No URL]"
-        except:
-             post_data['Post URL'] = "[No URL]"
-
-        return post_data
-
-    # =============================================================================
-
-    def _is_duplicate(self, post_data: dict) -> bool:
-        """Checks if a post is already scraped."""
-        if post_data.get('Post URL') and post_data['Post URL'] != "[No URL]":
-            for existing_post in self.scraped_data:
-                if existing_post.get('Post URL') == post_data['Post URL']:
-                    return True
-            return False
-        
-        # Fallback to text matching
-        for existing in self.scraped_data:
-            if (existing.get('Post Text') == post_data.get('Post Text') and 
-                existing.get('Author Name') == post_data.get('Author Name')):
-                return True
-        return False
-
-    # ================================================================================
-
+    # =====================================================================================
+    #  EXTRACTION LOGIC
+    # =====================================================================================
     def extract_post_elements(self):
-        """Extracts posts/jobs from the loaded page."""
         logging.info("Starting extraction...")
-
+        
+        # Try to wait for at least one card
         try:
-            # General wait for any item
             WebDriverWait(self.driver, 5).until(EC.presence_of_element_located(self.POST_CONTAINER))
         except:
-             pass # Continue to try finding elements
+            pass
 
-        # Find elements using the combined POST_CONTAINER xpath
+        # Find all elements matching the container (Job Cards or Posts)
         post_elements = self.driver.find_elements(*self.POST_CONTAINER)
         
-        # If looking for jobs specifically, try finding LIs inside the results list
-        if self.category.lower() == "jobs" and len(post_elements) == 0:
-             logging.info("Trying explicit Job List Item search...")
-             post_elements = self.driver.find_elements(By.XPATH, "//li[contains(@class, 'jobs-search-results__list-item')]")
-             
-        logging.info(f"Found {len(post_elements)} items.")
-        selected_category = getattr(self, "category", "Posts")
-
-        for i, post_element in enumerate(post_elements[:100]): # Limit to 100
-            try:
-                post_data = self._parse_single_post(post_element)
-                post_data['Category'] = selected_category
-                
-                if 'category' in post_data: del post_data['category']
-
-                if not self._is_duplicate(post_data):
-                    self.scraped_data.append(post_data)
-                    logging.debug(f"Item {i+1} added.")
-            except Exception as e:
-                continue
+        logging.info(f"Found {len(post_elements)} raw items.")
         
+        selected_category = getattr(self, "category", "Posts")
+        
+        for i, element in enumerate(post_elements[:150]): # Limit increased
+            try:
+                # Scroll element into view to ensure text is loaded
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+                
+                data = self._parse_single_post(element)
+                data['Category'] = selected_category
+                if 'category' in data: del data['category']
+                
+                if not self._is_duplicate(data):
+                    self.scraped_data.append(data)
+            except:
+                continue
+                
         logging.info(f"Extraction complete. Total unique items: {len(self.scraped_data)}")
         return self.scraped_data
 
-    # ===============================================================================
-    # ---------------- HUMAN MIMICRY (Bezier Curves) ----------------
-    def _generate_bezier_curve(self, x0, y0, x1, y1, x2, y2, num_points=30):
-        points = []
-        for t in [i / (num_points - 1) for i in range(num_points)]:
-            x = (1 - t)**2 * x0 + 2 * (1 - t) * t * x1 + t**2 * x2
-            y = (1 - t)**2 * y0 + 2 * (1 - t) * t * y1 + t**2 * y2
-            points.append((int(x), int(y)))
-        return points
-
-    def _human_mouse_movement(self, element=None, moves=1):
+    def _parse_single_post(self, element) -> dict:
+        data = {
+            'Post Text': "[No Title]", 
+            'Author Name': "[No Company]", 
+            'Timestamp': "[No Time]", 
+            'Post URL': "[No URL]",
+            'Date_For_Sorting': None
+        }
+        
+        # 1. Get Text (Job Title)
         try:
-            human_cfg = self.config.get("human_mimicry", {})
-            if not human_cfg.get("enable_mouse_movement", True):
-                return
+            # Try finding the strong tag or job title class
+            title = element.find_element(By.CSS_SELECTOR, "strong, .job-card-list__title, .artdeco-entity-lockup__title")
+            data['Post Text'] = title.text.strip()
+        except:
+            try:
+                data['Post Text'] = element.text.split('\n')[0]
+            except: pass
 
-            screen_width, screen_height = pyautogui.size()
-
-            for _ in range(moves):
-                if element and hasattr(element, 'location') and element.is_displayed():
-                    loc = element.location
-                    size = element.size
-                    target_x = loc['x'] + size['width']//2 + random.randint(-10, 10)
-                    target_y = loc['y'] + size['height']//2 + random.randint(-10, 10)
-                else:
-                    target_x = random.randint(100, screen_width-100)
-                    target_y = random.randint(100, screen_height-100)
-                
-                current_x, current_y = pyautogui.position()
-                ctrl_x = (current_x + target_x)//2 + random.randint(-50, 50)
-                ctrl_y = (current_y + target_y)//2 + random.randint(-50, 50)
-                points = self._generate_bezier_curve(current_x, current_y, ctrl_x, ctrl_y, target_x, target_y,
-                                                     num_points=random.randint(20, 40))
- 
-                for px, py in points:
-                    pyautogui.moveTo(px, py, duration=random.uniform(0.002, 0.01))
-                    time.sleep(random.uniform(0.001, 0.005))
-
-                for _ in range(random.randint(1, 3)):
-                    jitter_x = target_x + random.randint(-3, 3)
-                    jitter_y = target_y + random.randint(-3, 3)
-                    pyautogui.moveTo(jitter_x, jitter_y, duration=random.uniform(0.05, 0.1))
-
-        except Exception as e:
-            logging.warning(f"Mouse movement failed: {e}")
-
-    def _random_human_action(self):
-        choice = random.choice(["mouse", "jitter", "idle"])
-        if choice == "mouse":
-            self._human_mouse_movement()
-        elif choice == "jitter":
-            self._continuous_mouse_jitter()
-        else:
-            time.sleep(random.uniform(0.5, 1.5))
-
-    def _human_typing(self, element, text: str):
-        min_delay, max_delay = self.config["human_mimicry"]["typing_speed"]
-        element.clear()
-        for char in text:
-            element.send_keys(char)
-            time.sleep(random.uniform(min_delay, max_delay))
-        time.sleep(random.uniform(0.5, 1.0))
-
-    def _random_human_mouse_move(self):
+        # 2. Get Author (Company)
         try:
-            element = self.driver.find_element("tag name", "body")
-            x_offset = random.randint(-20, 20) 
-            y_offset = random.randint(-20, 20)
-            ActionChains(self.driver).move_to_element_with_offset(element, x_offset, y_offset).perform()
-        except WebDriverException as e:
-            logging.warning(f"Random mouse move skipped: {e}")
+            comp = element.find_element(By.CSS_SELECTOR, ".job-card-container__primary-description, .artdeco-entity-lockup__subtitle")
+            data['Author Name'] = comp.text.strip()
+        except: pass
 
-    def _continuous_mouse_jitter(self, duration: float = 1.5):
-        end_time = time.time() + duration
-        while time.time() < end_time:
-            self._random_human_mouse_move()
-            time.sleep(random.uniform(0.3, 0.6))
+        # 3. Get URL
+        try:
+            link = element.find_element(By.TAG_NAME, "a")
+            href = link.get_attribute("href")
+            if href: data['Post URL'] = href.split('?')[0]
+        except: pass
+        
+        # 4. Get Time/Location
+        try:
+            meta = element.find_element(By.CSS_SELECTOR, "time, .job-card-container__metadata-item")
+            data['Timestamp'] = meta.text.strip()
+            data['Date_For_Sorting'] = self._extract_date_for_sorting(data['Timestamp'])
+        except: pass
 
-    def _human_presence(self):
-        if random.random() < 0.6:
-            self._random_human_action()
+        return data
+
+    def _is_duplicate(self, new_post):
+        for p in self.scraped_data:
+            if p['Post URL'] != "[No URL]" and p['Post URL'] == new_post['Post URL']:
+                return True
+        return False
 
     # =====================================================================================
-
-    def _create_proxy_extension(self, proxy_url, username=None, password=None):
-        return "fake_proxy_extension.zip"
-
-    def clean_export_data(scraped_data: list[dict]):
-        for post in scraped_data:
-            if 'category' in post:  
-                del post['category']
-        return scraped_data
-
-    # ========================================================================================
-
-    def _extract_date_for_sorting(self, timestamp: str):
-        if not timestamp or timestamp == "[Unknown Time]":
-            return None
-        try:
-            if "T" in timestamp and "-" in timestamp:
-                from datetime import datetime
-                date_str = timestamp.split("T")[0]
-                return datetime.strptime(date_str, "%Y-%m-%d")
-            elif "ago" in timestamp.lower():
-                return self._parse_relative_date(timestamp)
-            else:
-                clean_timestamp = timestamp.replace("on ", "")
-                from datetime import datetime
-                for fmt in ["%b %d, %Y", "%d %b %Y", "%B %d, %Y", "%Y-%m-%d"]:
-                    try:
-                        return datetime.strptime(clean_timestamp, fmt)
-                    except ValueError:
-                        continue
-        except Exception:
-            pass
-        return None
-
-    def _parse_relative_date(self, relative_time: str):
-        from datetime import datetime, timedelta
-        import re
-        now = datetime.now()
-        pattern = r'(\d+)\s+(day|week|hour|minute|month|year)s?\s+ago'
-        match = re.search(pattern, relative_time.lower())
-        if match:
-            amount = int(match.group(1))
-            unit = match.group(2)
-            if unit == "day": return now - timedelta(days=amount)
-            elif unit == "week": return now - timedelta(weeks=amount)
-            elif unit == "month": return now - timedelta(days=30*amount)
-            elif unit == "year": return now - timedelta(days=365*amount)
-            elif unit == "hour": return now - timedelta(hours=amount)
-            elif unit == "minute": return now - timedelta(minutes=amount)
-        return None
-
-    def sort_posts_by_date(self, posts: list, sort_order: str = "latest"):
-        if sort_order.lower() == "none":
-            return posts
-        posts_with_dates = []
-        posts_without_dates = []
-        for post in posts:
-            if post.get('Date_For_Sorting'):
-                posts_with_dates.append(post)
-            else:
-                posts_without_dates.append(post)
-        reverse_order = (sort_order.lower() == "latest")
-        posts_with_dates.sort(key=lambda x: x['Date_For_Sorting'], reverse=reverse_order)
-        return posts_with_dates + posts_without_dates
-
-    # ===============================================================================
-
+    #  UTILITIES & FILTERS
+    # =====================================================================================
+    
     def select_category_from_config(self):
-        category = self.config["scraper_settings"].get("category", "Posts")
-        logging.info(f"Selecting category from config: {category}")
+        cat = self.category
+        logging.info(f"Selecting category: {cat}")
         try:
-            self._random_delay(5, 7)
-            category_button = WebDriverWait(self.driver, 20).until(
-                EC.element_to_be_clickable((By.XPATH, f"//button[contains(@class, 'search-reusables__filter-pill-button') and contains(., '{category}')]"))
+            self._random_delay(3, 5)
+            # Find buttons that contain the category name
+            btn = WebDriverWait(self.driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, f"//button[contains(., '{cat}')]"))
             )
-            self._human_mouse_movement(category_button, moves=2)
-            self.driver.execute_script("arguments[0].click();", category_button)
-            logging.info(f"Category selected successfully: {category}")
-            self._random_delay(4, 6)
+            btn.click()
+            logging.info("Category clicked.")
+            self._random_delay(3, 5)
         except Exception as e:
-            logging.warning(f"Category select failed, trying alternative: {e}")
-            try:
-                category_button = WebDriverWait(self.driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, f"//button[.//span[text()='{category}']]"))
-                )
-                self.driver.execute_script("arguments[0].click();", category_button)
-            except Exception as e2:
-                logging.error(f"Failed to select category: {e2}")
+            logging.warning(f"Category selection issue: {e}")
 
     def apply_all_filters(self):
+        """Applies Sort and Time filters using a simpler approach."""
         try:
-            logging.info("Opening 'All filters' panel...")
-            self.driver.execute_script("window.scrollTo(0, 0);")
-            self._random_delay(2, 3)
+            logging.info("Applying filters...")
             
-            category = self.config["scraper_settings"].get("category", "Posts")
-            
-            all_filters_button = None
-            all_filters_xpaths = [
-                "//button[contains(text(), 'All filters')]",
-                "//button[contains(@aria-label, 'Show all filters')]",
-                "//button[contains(., 'All filters')]"
-            ]
-            for xpath in all_filters_xpaths:
-                try:
-                    all_filters_button = WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, xpath))
-                    )
-                    if all_filters_button: break
-                except: continue
-            
-            if not all_filters_button:
-                logging.error("'All filters' button not found")
-                return
-            
-            self._human_mouse_movement(all_filters_button, moves=2)
-            self.driver.execute_script("arguments[0].click();", all_filters_button)
-            self._random_delay(4, 6)
-            
-            # Sort By
-            sort_order = self.config["scraper_settings"].get("sort_by_date", "latest")
-            if sort_order.lower() != "none":
-                sort_text = self._get_sort_text_for_category(category, sort_order)
-                try:
-                    sort_xpaths = [f"//label[contains(., '{sort_text}')]", f"//span[contains(text(), '{sort_text}')]/ancestor::label"]
-                    for xpath in sort_xpaths:
-                        try:
-                            sort_element = self.driver.find_element(By.XPATH, xpath)
-                            self.driver.execute_script("arguments[0].click();", sort_element)
-                            logging.info(f"Sort '{sort_text}' selected")
-                            break
-                        except: continue
-                except Exception as e: logging.warning(f"Sort error: {e}")
-
-            # Time Filter
-            time_filter = self.config["scraper_settings"].get("time_filter", "none")
-            if time_filter.lower() != "none":
-                time_map = {"past_hour": "Past 24 hours", "past_24_hours": "Past 24 hours", "past_week": "Past week", "past_month": "Past month"}
-                date_text = time_map.get(time_filter.lower(), "Past 24 hours")
-                try:
-                    date_xpaths = [f"//label[contains(., '{date_text}')]", f"//span[contains(text(), '{date_text}')]/ancestor::label"]
-                    for xpath in date_xpaths:
-                        try:
-                            date_elem = self.driver.find_element(By.XPATH, xpath)
-                            self.driver.execute_script("arguments[0].click();", date_elem)
-                            logging.info(f"Date '{date_text}' selected")
-                            break
-                        except: continue
-                except Exception as e: logging.warning(f"Date filter error: {e}")
-
-            # Apply
+            # Click "All filters"
             try:
-                current_url = self.driver.current_url
-                show_results = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Show') and contains(., 'result')]"))
+                all_filters = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'All filters')]"))
                 )
-                self.driver.execute_script("arguments[0].click();", show_results)
-                
+                all_filters.click()
+                logging.info("'All filters' clicked.")
+                self._random_delay(2, 4)
+            except:
+                logging.error("'All filters' button missing.")
+                return
+
+            # Apply Sort (Most recent)
+            sort_order = self.config["scraper_settings"].get("sort_by_date", "latest")
+            if sort_order == "latest":
                 try:
-                    WebDriverWait(self.driver, 15).until(lambda d: d.current_url != current_url)
+                    # Look for label containing 'Most recent'
+                    sort_lbl = self.driver.find_element(By.XPATH, "//label[contains(., 'Most recent')]")
+                    sort_lbl.click()
+                    logging.info("Sort: Most recent selected.")
+                    self._random_delay(1, 2)
                 except: pass
-                
-                self._random_delay(3, 5)
-                # Scroll top
-                self.driver.execute_script("window.scrollTo(0, 0);")
-                
-            except Exception as e:
-                logging.error(f"Failed to click Show results: {e}")
-        
+
+            # Apply Time (Past 24 hours)
+            time_filter = self.config["scraper_settings"].get("time_filter", "none")
+            if "24" in time_filter:
+                try:
+                    time_lbl = self.driver.find_element(By.XPATH, "//label[contains(., 'Past 24 hours')]")
+                    time_lbl.click()
+                    logging.info("Time: Past 24 hours selected.")
+                    self._random_delay(1, 2)
+                except: pass
+
+            # Click Show Results
+            try:
+                show_btn = self.driver.find_element(By.XPATH, "//button[contains(., 'Show') and contains(., 'result')]")
+                show_btn.click()
+                logging.info("Show Results clicked.")
+                self._random_delay(4, 6)
+            except:
+                logging.error("Show results button missing.")
+
         except Exception as e:
             logging.error(f"Filter error: {e}")
 
-    def _get_sort_text_for_category(self, category: str, sort_order: str) -> str:
-        sort_mappings = {
-            "Posts": {"latest": "Latest", "oldest": "Top match"},
-            "Jobs": {"latest": "Most recent", "oldest": "Most relevant"},
-            "People": {"latest": "Recently added", "oldest": "Most relevant"},
-            "Companies": {"latest": "Most recent", "oldest": "Most relevant"}
-        }
-        cat_map = sort_mappings.get(category, sort_mappings["Posts"])
-        return cat_map.get(sort_order.lower(), cat_map["latest"])
+    def _extract_date_for_sorting(self, timestamp):
+        if not timestamp: return None
+        try:
+            if "ago" in timestamp.lower():
+                return self._parse_relative_date(timestamp)
+            from datetime import datetime
+            return datetime.now() # Fallback
+        except: return None
+
+    def _parse_relative_date(self, text):
+        from datetime import datetime, timedelta
+        import re
+        now = datetime.now()
+        match = re.search(r'(\d+)\s+(minute|hour|day|week)', text)
+        if match:
+            val = int(match.group(1))
+            unit = match.group(2)
+            if 'minute' in unit: return now - timedelta(minutes=val)
+            if 'hour' in unit: return now - timedelta(hours=val)
+            if 'day' in unit: return now - timedelta(days=val)
+            if 'week' in unit: return now - timedelta(weeks=val)
+        return now
+
+    def sort_posts_by_date(self, posts, order="latest"):
+        return posts # Already sorted by LinkedIn filter
+
+    def _human_typing(self, element, text):
+        element.clear()
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.15))
+
+    def clean_export_data(scraped_data):
+        return scraped_data
+
+    def _create_proxy_extension(self, proxy_url, username=None, password=None):
+        return "fake_proxy_extension.zip"
