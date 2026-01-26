@@ -42,8 +42,8 @@ class LinkedInScraper:
     LOGIN_SUBMIT_BUTTON = (By.XPATH, "//button[@type='submit']")
     SEARCH_INPUT_FIELD = (By.CSS_SELECTOR, 'input.search-global-typeahead__input')
     
-    # Updated Post Container to handle both Feed Posts and Job Cards
-    POST_CONTAINER = (By.XPATH, "//div[contains(@class, 'feed-shared-update-v2') or contains(@class, 'job-card-container')]")
+    # Updated Post Container: Handles standard posts and Job List Items (li)
+    POST_CONTAINER = (By.XPATH, "//div[contains(@class, 'feed-shared-update-v2')] | //li[contains(@class, 'jobs-search-results__list-item')] | //div[contains(@class, 'job-card-container')]")
     
     POST_AUTHOR_NAME = (By.XPATH, ".//span[@dir='ltr']/span[@aria-hidden='true']")
     POST_TIMESTAMP = (By.XPATH, ".//a[contains(@class, 'update-components-header__actor-action')]")
@@ -214,25 +214,24 @@ class LinkedInScraper:
     def human_like_scroll(self):
         """
         Simulates scrolling. 
-        CRITICAL UPDATE: Handles the specific left-side scrollable container for Jobs.
+        CRITICAL UPDATE: Handles Job List scrolling by targeting List Items (LI) 
+        and using scrollIntoView to force load.
         """
         try:
             scroll_limit = self.config['scraper_settings']['scroll_limit']
             max_attempts = self.config['scraper_settings'].get('max_scroll_attempts', 50)
 
-            # Check if we are in Jobs mode
             is_jobs_category = self.category.lower() == "jobs"
             jobs_container = None
 
+            # 1. Locate Container
             if is_jobs_category:
                 logging.info("Jobs category detected. Locating scrollable job list...")
-                # XPaths for the scrollable left panel in Jobs view
-                # The class usually contains 'jobs-search-results-list'
                 job_list_selectors = [
                     "//div[contains(@class, 'jobs-search-results-list')]", 
                     "//div[contains(@class, 'jobs-search-results__list')]",
-                    "//div[contains(@class, 'scaffold-layout__list')]",
-                    "//div[contains(@class, 'jobs-search-results')]"
+                    "//ul[contains(@class, 'jobs-search-results__list')]",
+                    "//div[contains(@class, 'scaffold-layout__list')]"
                 ]
                 
                 for xpath in job_list_selectors:
@@ -261,29 +260,34 @@ class LinkedInScraper:
 
             while scroll_count < scroll_limit and attempts < max_attempts:
                 
-                # Human behavior
                 if random.random() < 0.3:
                     self._random_human_action()
                 
-                self._random_human_mouse_move()
-                
-                # Random scroll amount
-                scroll_by = random.randint(300, 800)  # Smaller chunks for job list
-
                 try:
                     if jobs_container:
-                        # CRITICAL: Scroll the specific CONTAINER, not the window
-                        self.driver.execute_script(f"arguments[0].scrollBy(0, {scroll_by});", jobs_container)
-                        logging.debug("Scrolled job container.")
+                        # === STRATEGY UPDATE: Scroll to LAST ELEMENT ===
+                        # Finding the list items inside the container
+                        job_items = jobs_container.find_elements(By.TAG_NAME, "li")
+                        
+                        if job_items:
+                            # Target the last visible item
+                            last_item = job_items[-1]
+                            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'end'});", last_item)
+                            logging.debug(f"Scrolled to job item #{len(job_items)}")
+                        else:
+                            # Fallback if no LIs found
+                            scroll_by = random.randint(300, 800)
+                            self.driver.execute_script(f"arguments[0].scrollBy(0, {scroll_by});", jobs_container)
                     else:
                         # Normal Window Scroll
+                        scroll_by = random.randint(300, 800)
                         self.driver.execute_script(f"window.scrollBy(0, {scroll_by});")
                 
                 except Exception as e:
                     logging.error(f"Scroll command failed: {e}")
                     break
 
-                self._random_delay(1.5, 3.0)
+                self._random_delay(2.0, 4.0) # Gave slightly more time for AJAX load
 
                 # Check if new content loaded
                 try:
@@ -298,6 +302,12 @@ class LinkedInScraper:
                     attempts += 1
                     if attempts % 3 == 0:
                         logging.info("Waiting for content to load...")
+                        # Try a small nudge up and down to trigger event
+                        if jobs_container:
+                            self.driver.execute_script("arguments[0].scrollBy(0, -50);", jobs_container)
+                            time.sleep(0.5)
+                            self.driver.execute_script("arguments[0].scrollBy(0, 50);", jobs_container)
+
                     if attempts >= 10:
                         logging.warning("Max scroll attempts reached without new content.")
                         break
@@ -334,13 +344,13 @@ class LinkedInScraper:
         except:
             # For Jobs (Job Title)
             try:
-                title_elem = post_element.find_element(By.XPATH, ".//strong") # Often job title is strong
-                post_data['Post Text'] = title_elem.text.strip() # Using Job Title as 'Post Text'
+                # Try finding the link text which is usually the title
+                title_elem = post_element.find_element(By.CSS_SELECTOR, "strong, .job-card-list__title")
+                post_data['Post Text'] = title_elem.text.strip()
             except:
                 try:
-                    # Fallback for job title
-                    title_elem = post_element.find_element(By.CLASS_NAME, "job-card-list__title")
-                    post_data['Post Text'] = title_elem.text.strip()
+                    # Fallback
+                    post_data['Post Text'] = post_element.text.split('\n')[0]
                 except:
                     post_data['Post Text'] = "[No Text/Title Found]"
 
@@ -351,7 +361,7 @@ class LinkedInScraper:
         except:
             # For Jobs (Company Name)
             try:
-                company_elem = post_element.find_element(By.CLASS_NAME, "job-card-container__primary-description")
+                company_elem = post_element.find_element(By.CSS_SELECTOR, ".job-card-container__primary-description")
                 post_data['Author Name'] = company_elem.text.strip()
             except:
                 post_data['Author Name'] = "[Unknown Author/Company]"
@@ -363,7 +373,7 @@ class LinkedInScraper:
         except:
             # If no time, maybe get location for jobs
             try:
-                loc_elem = post_element.find_element(By.CLASS_NAME, "job-card-container__metadata-item")
+                loc_elem = post_element.find_element(By.CSS_SELECTOR, ".job-card-container__metadata-item")
                 post_data['Timestamp'] = loc_elem.text.strip() # Storing location/metadata as timestamp fallback
             except:
                 post_data['Timestamp'] = "[Unknown Time]"
@@ -413,13 +423,14 @@ class LinkedInScraper:
         except:
              pass # Continue to try finding elements
 
-        # Find elements
+        # Find elements using the combined POST_CONTAINER xpath
         post_elements = self.driver.find_elements(*self.POST_CONTAINER)
         
-        # If looking for jobs specifically, try job card class
+        # If looking for jobs specifically, try finding LIs inside the results list
         if self.category.lower() == "jobs" and len(post_elements) == 0:
-             post_elements = self.driver.find_elements(By.CLASS_NAME, "job-card-container")
-
+             logging.info("Trying explicit Job List Item search...")
+             post_elements = self.driver.find_elements(By.XPATH, "//li[contains(@class, 'jobs-search-results__list-item')]")
+             
         logging.info(f"Found {len(post_elements)} items.")
         selected_category = getattr(self, "category", "Posts")
 
