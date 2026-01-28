@@ -1,0 +1,95 @@
+import logging
+from src.utils import load_config, export_data, extract_emails_from_text
+from src.scraper import LinkedInScraper
+from selenium.common.exceptions import WebDriverException
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("linkedin_scraper.log"),
+        logging.StreamHandler()
+    ]
+)
+
+def main():
+    logging.info("--- LinkedIn Email Scraper Starting ---")
+    
+    scraper = None
+    try:
+        # 1. Load Config
+        config = load_config()
+        scraper_settings = config.get("scraper_settings", {})
+        search_query = scraper_settings.get("search_query", "")
+        
+        logging.info(f"Query: '{search_query}' | Mode: Posts Only")
+        
+        # 2. Init & Login
+        scraper = LinkedInScraper(config)
+        scraper.login()
+        
+        # 3. Search & Filter
+        scraper.perform_search()
+        scraper.select_category_from_config() # Clicks 'Posts'
+        scraper.apply_all_filters()           # Applies 'Latest' & '24h'
+       
+        # 4. Scroll & Extract
+        scraper.human_like_scroll()
+        scraper.extract_post_elements()
+        scraped_data = scraper.scraped_data
+        
+        if not scraped_data:
+            logging.warning("No posts found. Please check your search query.")
+            return
+        
+        logging.info(f"Total Raw Posts Scraped: {len(scraped_data)}")
+        
+        # =================================================================
+        # CRITICAL STEP: Filter for EMAILS ONLY
+        # =================================================================
+        email_posts_only = []
+        
+        for post in scraped_data:
+            text = post.get("Post Text", "")
+            
+            # Use Regex to find emails in the FULL text of the post
+            emails = extract_emails_from_text(text)
+            
+            if emails:
+                # Add email info to the post object
+                post["email"] = emails[0]
+                post["email_count"] = len(emails)
+                post["emails"] = emails
+                
+                # Add to final list
+                email_posts_only.append(post)
+                print(f"✅ Found Email: {emails[0]}")
+            else:
+                # Ignore posts with no email
+                pass
+
+        logging.info(f"Final Count (Emails Found): {len(email_posts_only)}")
+        
+        if not email_posts_only:
+            print("\n❌ No emails found in the scraped posts.")
+            return
+
+        # 5. Export Result
+        # Saves to CSV, JSON, Excel, Doc
+        export_data(email_posts_only, search_query, "Posts", sort_order="latest")
+        
+        print(f"\n{'='*50}")
+        print(f"SUCCESS! Saved {len(email_posts_only)} posts with emails.")
+        print("Check the 'output/' folder.")
+        print(f"{'='*50}")
+        
+    except Exception as e:
+        logging.error(f"Critical Error: {e}", exc_info=True)
+    finally:
+        if scraper:
+            scraper.close()
+            print("\nBrowser closed.")
+
+if __name__ == "__main__":
+    main()
