@@ -698,9 +698,7 @@ class LinkedInScraper:
         
         selected_category = getattr(self, "category", "Posts")
         
-        # ============================================================
-        # **NEW: Filter duplicate post elements by data-urn FIRST**
-        # ============================================================
+        # Filter duplicate post elements by data-urn FIRST
         unique_post_elements = []
         seen_urns = set()
         
@@ -717,7 +715,7 @@ class LinkedInScraper:
                         continue
                 else:
                     # If no URN, use outerHTML hash as identifier
-                    html_hash = hash(element.get_attribute('outerHTML')[:500])  # First 500 chars
+                    html_hash = hash(element.get_attribute('outerHTML')[:500])
                     if html_hash not in seen_urns:
                         seen_urns.add(html_hash)
                         unique_post_elements.append(element)
@@ -730,23 +728,26 @@ class LinkedInScraper:
                 unique_post_elements.append(element)
         
         logging.info(f"Unique post elements after filtering: {len(unique_post_elements)}")
-        # ============================================================
         
         # Temporary storage to track processed posts
         processed_post_urls = set()
         processed_post_texts = set()
         
-        for i, post_element in enumerate(unique_post_elements[:50]):  # Changed to unique_post_elements
+        # Import email extraction function
+        from src.utils import extract_emails_from_text
+        
+
+        for i, post_element in enumerate(unique_post_elements):
+            # if (i + 1) % 50 == 0:
+                # logging.info(f"Progress: Processed {i + 1}/{len(unique_post_elements)} posts, found {len(self.scraped_data)} with emails")
+    
             try:
                 post_data = self._parse_single_post(post_element)
                 
-                # ============================================================
-                # **NEW: Skip posts with [Unknown Author] immediately**
-                # ============================================================
+                # Skip posts with [Unknown Author] immediately
                 if post_data.get('Author Name') == "[Unknown Author]":
                     logging.debug(f"Skipping post with Unknown Author (index {i})")
                     continue
-                # ============================================================
                 
                 # Ensure Category key exists
                 post_data['Category'] = post_data.get('Category', selected_category)
@@ -776,22 +777,40 @@ class LinkedInScraper:
                     processed_post_urls.add(post_url)
                 
                 # Also check text to avoid duplicates
-                text_hash = hash(post_text[:200])  # Increased to 200 chars for better comparison
+                text_hash = hash(post_text[:200])
                 if text_hash in processed_post_texts:
                     logging.debug(f"Skipping duplicate post (text): {post_text[:80]}...")
                     continue
                 processed_post_texts.add(text_hash)
                 
+                # ============================================================
+                # **NEW: CHECK FOR EMAILS IN POST TEXT**
+                # ============================================================
+                emails = extract_emails_from_text(post_text)
+                
+                # Skip posts with NO emails
+                if not emails:
+                    logging.debug(f"Skipping post without email (index {i}) - Author: {post_data.get('Author Name')}")
+                    continue
+                
+                # Add email information to post_data
+                post_data['email'] = emails[0] if emails else "No email"
+                post_data['email_count'] = len(emails)
+                post_data['emails'] = emails
+                
+                logging.info(f"✓ Post has {len(emails)} email(s): {emails}")
+                # ============================================================
+                
                 # Use existing duplicate check
                 if post_data['Post Text'] and not self._is_duplicate(post_data):
                     self.scraped_data.append(post_data)
-                    logging.info(f"✓ Post {i+1} added: {post_data.get('Author Name', 'Unknown')} - {post_data.get('Timestamp', 'No time')}")
+                    logging.info(f"✓ Post {i+1} added (with email): {post_data.get('Author Name', 'Unknown')} - {post_data.get('Timestamp', 'No time')}")
                     
             except Exception as e:
                 logging.error(f"Error processing post {i+1}: {e}", exc_info=True)
                 continue
         
-        logging.info(f"Extraction complete. Total unique posts: {len(self.scraped_data)}")
+        logging.info(f"Extraction complete. Total unique posts with emails: {len(self.scraped_data)}")
         return self.scraped_data
     # ===============================================================================
 
