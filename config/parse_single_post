@@ -1,0 +1,72 @@
+def _parse_single_post(self, post_element) -> dict:
+        """
+        Parses a single LinkedIn post element into a structured dictionary.
+        UPDATED: Grabs ALL visible text to ensure no email is missed.
+        """
+
+        post_data = {
+            'Post Text': "",
+            'Author Name': "[Unknown Author]",
+            'Timestamp': "[Unknown Time]",
+            'Post URL': "[No URL Found]",
+            'Category': getattr(self, 'category', 'Posts'),
+            'Date_For_Sorting': None
+        }
+
+        try:
+            # 1. CLICK "SEE MORE" (Bohat Zaroori: Emails aksar yahan chupi hoti hain)
+            try:
+                # Fast xpath to find 'see more' button inside this specific post
+                see_more = post_element.find_element(By.XPATH, ".//button[contains(@aria-label, 'see more') or contains(text(), 'see more')]")
+                # JavaScript click is faster and more reliable than normal click
+                self.driver.execute_script("arguments[0].click();", see_more)
+            except:
+                pass # Agar button nahi hai tou koi masla nahi
+
+            # 2. GRAB FULL TEXT (The Fix)
+            # Hum specific class nahi dhund rahy, hum poore element ka text le rahy hain.
+            # Is se Title, Body, Hashtags, sab aa jayega.
+            full_text = post_element.text.strip()
+            
+            if full_text:
+                post_data['Post Text'] = full_text
+            else:
+                post_data['Post Text'] = "[No Text Content Found]"
+
+            # 3. Extract Metadata (Author/Time/URL) - Best Effort
+            # (Ye sirf formatting k liye hai, email 'Post Text' se niklay gi)
+            
+            # Author
+            try:
+                # Try finding any bold text or span in the header area
+                author_elem = post_element.find_element(By.XPATH, ".//span[contains(@class, 'update-components-actor__title') or contains(@class, 'feed-shared-actor__title')]")
+                post_data['Author Name'] = author_elem.text.split('\n')[0].strip()
+            except:
+                pass 
+
+            # Timestamp
+            try:
+                # Look for time indicators like '1h', '2d', '1w'
+                time_elem = post_element.find_element(By.XPATH, ".//span[contains(text(), 'ago') or contains(text(), 'h') or contains(text(), 'd') or contains(text(), 'w')]")
+                post_data['Timestamp'] = time_elem.text.strip()
+            except:
+                pass
+
+            # URL
+            try:
+                # Try to find the link to the post activity
+                link_elem = post_element.find_element(By.XPATH, ".//a[contains(@href, 'activity') or contains(@href, 'urn:li:activity')]")
+                href = link_elem.get_attribute("href")
+                if href:
+                    post_data['Post URL'] = href.split('?')[0]
+            except:
+                pass
+            
+            # Date sorting helper (backend use)
+            post_data['Date_For_Sorting'] = self._extract_date_for_sorting(post_data['Timestamp'])
+
+        except Exception as e:
+            # Agar koi critical error aaye tou log karo, lekin crash mat karo
+            logging.debug(f"Error parsing post: {e}")
+
+        return post_data
