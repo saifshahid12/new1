@@ -1,0 +1,330 @@
+from selenium.webdriver.common.action_chains import ActionChains
+import time
+import random
+import logging
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
+from src.utils import load_credentials
+import pyautogui
+from datetime import datetime
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class LinkedInScraper:
+    """
+    LinkedInScraper designed strictly for extracting POSTS.
+    Focuses on expanding text to capture emails effectively.
+    """
+
+    # --- CONSTANTS ---
+    LOGIN_USERNAME_FIELD = (By.NAME, 'session_key')
+    LOGIN_PASSWORD_FIELD = (By.NAME, 'session_password')
+    LOGIN_SUBMIT_BUTTON = (By.XPATH, "//button[@type='submit']")
+    SEARCH_INPUT_FIELD = (By.CSS_SELECTOR, 'input.search-global-typeahead__input')
+    
+    # Target only Feed Updates (Posts)
+    POST_CONTAINER = (By.XPATH, "//div[contains(@class, 'feed-shared-update-v2')]")
+    
+    def __init__(self, config, init_driver=True):
+        self.config = config
+        self.driver = None
+        self.scraped_data = []
+        self.username, self.password = load_credentials()
+        self.search_query = config['scraper_settings'].get('search_query', '')
+        # Force category to Posts ignoring config
+        self.category = "Posts" 
+        
+        if init_driver:
+            self._setup_driver()
+
+    def _setup_driver(self):
+        """Sets up Chrome Driver with anti-bot options."""
+        logging.info("Setting up Chrome WebDriver...")
+        service = ChromeService(ChromeDriverManager().install())
+        options = webdriver.ChromeOptions()
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-notifications")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+        
+        self.driver = webdriver.Chrome(service=service, options=options)
+        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+    def close(self):
+        if self.driver:
+            self.driver.quit()
+
+    def _random_delay(self, min_time=2.0, max_time=4.0):
+        time.sleep(random.uniform(min_time, max_time))
+
+    def login(self):
+        """Logs into LinkedIn."""
+        url = self.config['scraper_settings']['base_url']
+        logging.info(f"Navigating to login page: {url}")
+        self.driver.get(url)
+        self._random_delay()
+
+        try:
+            wait = WebDriverWait(self.driver, 20)
+            
+            # Enter Username
+            user_field = wait.until(EC.presence_of_element_located(self.LOGIN_USERNAME_FIELD))
+            self._human_typing(user_field, self.username)
+            self._random_delay(1, 2)
+
+            # Enter Password
+            pass_field = wait.until(EC.presence_of_element_located(self.LOGIN_PASSWORD_FIELD))
+            self._human_typing(pass_field, self.password)
+            self._random_delay(1, 2)
+
+            # Click Login
+            wait.until(EC.element_to_be_clickable(self.LOGIN_SUBMIT_BUTTON)).click()
+            logging.info("Credentials submitted.")
+            self._random_delay(5, 8)
+            
+            # Verify Login
+            try:
+                wait.until(EC.presence_of_element_located(self.SEARCH_INPUT_FIELD))
+                logging.info("Login successful.")
+            except:
+                logging.warning("Search bar not found immediately (Captcha might be present).")
+
+        except Exception as e:
+            logging.error(f"Login failed: {e}")
+            raise
+
+    def perform_search(self):
+        """Executes the search query."""
+        logging.info(f"Searching for: '{self.search_query}'")
+        try:
+            search_box = WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located(self.SEARCH_INPUT_FIELD)
+            )
+            search_box.clear()
+            search_box.send_keys(self.search_query)
+            search_box.send_keys(Keys.ENTER)
+            self._random_delay(3, 5)
+        except Exception as e:
+            logging.error(f"Search failed: {e}")
+
+    # =====================================================================================
+    #  FILTER LOGIC (Optimized for Posts)
+    # =====================================================================================
+    
+    def select_category_from_config(self):
+        """Clicks the 'Posts' filter button."""
+        logging.info("Selecting 'Posts' category...")
+        try:
+            self._random_delay(3, 5)
+            # Look for button explicitly named "Posts"
+            btn = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Posts')]"))
+            )
+            btn.click()
+            logging.info("Category 'Posts' clicked.")
+            self._random_delay(3, 5)
+        except Exception as e:
+            logging.warning(f"Could not click Posts button: {e}")
+
+    def apply_all_filters(self):
+        """Applies 'Sort by' and 'Date Posted' filters."""
+        try:
+            logging.info("Applying filters...")
+            
+            # 1. Click "All filters"
+            try:
+                all_filters = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'All filters')]"))
+                )
+                all_filters.click()
+                self._random_delay(2, 3)
+            except:
+                logging.error("'All filters' button missing.")
+                return
+
+            # 2. Sort by "Latest"
+            sort_order = self.config["scraper_settings"].get("sort_by_date", "latest")
+            if sort_order == "latest":
+                try:
+                    # Logic: Find label text containing 'Latest' and click it
+                    sort_lbl = self.driver.find_element(By.XPATH, "//label[contains(., 'Latest')]")
+                    sort_lbl.click()
+                    logging.info("Filter: Latest selected.")
+                    self._random_delay(1, 2)
+                except: pass
+
+            # 3. Date Posted (e.g., Past 24 hours)
+            time_filter = self.config["scraper_settings"].get("time_filter", "none")
+            if "24" in time_filter:
+                try:
+                    time_lbl = self.driver.find_element(By.XPATH, "//label[contains(., 'Past 24 hours')]")
+                    time_lbl.click()
+                    logging.info("Filter: Past 24 hours selected.")
+                    self._random_delay(1, 2)
+                except: pass
+
+            # 4. Click "Show results"
+            try:
+                show_btn = self.driver.find_element(By.XPATH, "//button[contains(., 'Show') and contains(., 'result')]")
+                show_btn.click()
+                logging.info("Applied filters. Reloading page...")
+                self._random_delay(5, 7)
+                self.driver.execute_script("window.scrollTo(0, 0);")
+            except:
+                logging.error("Show results button missing.")
+
+        except Exception as e:
+            logging.error(f"Filter error: {e}")
+
+    # =====================================================================================
+    #  SCROLLING (Simple Window Scroll for Posts)
+    # =====================================================================================
+    def human_like_scroll(self):
+        """Scrolls the main window to load more posts."""
+        scroll_limit = self.config['scraper_settings']['scroll_limit']
+        logging.info(f"Starting scroll loop (Limit: {scroll_limit})...")
+        
+        scroll_count = 0
+        last_height = self.driver.execute_script("return document.body.scrollHeight")
+        
+        while scroll_count < scroll_limit:
+            # Random scroll amount
+            scroll_by = random.randint(600, 1000)
+            self.driver.execute_script(f"window.scrollBy(0, {scroll_by});")
+            
+            # Human jitter
+            if random.random() < 0.3:
+                self._random_mouse_move()
+            
+            self._random_delay(2.0, 4.0)
+            
+            # Check if bottom reached or new content loaded
+            new_height = self.driver.execute_script("return document.body.scrollHeight")
+            if new_height != last_height:
+                last_height = new_height
+                scroll_count += 1
+                logging.info(f"Scrolled {scroll_count}/{scroll_limit}")
+            else:
+                # Try to force scroll to bottom to trigger load
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(3)
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    logging.info("No new posts loaded.")
+                    break
+                else:
+                    last_height = new_height
+                    scroll_count += 1
+
+    # =====================================================================================
+    #  EXTRACTION (Aggressive Text Capture)
+    # =====================================================================================
+    def extract_post_elements(self):
+        logging.info("Extracting posts...")
+        
+        # Find all post containers
+        post_elements = self.driver.find_elements(*self.POST_CONTAINER)
+        logging.info(f"Found {len(post_elements)} posts on page.")
+        
+        for i, element in enumerate(post_elements[:100]): # Limit processing
+            try:
+                # 1. Scroll element into view
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+                
+                # 2. Click "See more" to reveal hidden emails
+                try:
+                    see_more = element.find_element(By.XPATH, ".//button[contains(text(), 'see more')]")
+                    self.driver.execute_script("arguments[0].click();", see_more)
+                    time.sleep(0.5)
+                except: 
+                    pass
+
+                # 3. Parse Data
+                post_data = self._parse_single_post(element)
+                
+                # 4. Save if unique
+                if not self._is_duplicate(post_data):
+                    self.scraped_data.append(post_data)
+                    
+            except Exception as e:
+                continue
+                
+        logging.info(f"Extraction complete. Scraped {len(self.scraped_data)} unique posts.")
+        return self.scraped_data
+
+    def _parse_single_post(self, element) -> dict:
+        """
+        Parses a post. 
+        IMPORTANT: Captures element.text (full visible text) to ensure emails are found.
+        """
+        data = {
+            'Post Text': "", 
+            'Author Name': "[Unknown]", 
+            'Timestamp': "[No Time]", 
+            'Post URL': "[No URL]",
+            'Category': "Posts"
+        }
+        
+        try:
+            # GRAB FULL TEXT (Crucial for Emails)
+            # This captures the author, the body, hashtags, everything visible.
+            data['Post Text'] = element.text.strip()
+            
+            # Attempt to extract specific fields for CSV columns
+            
+            # Author
+            try:
+                auth = element.find_element(By.XPATH, ".//span[contains(@class, 'update-components-actor__title') or contains(@class, 'feed-shared-actor__title')]")
+                data['Author Name'] = auth.text.split('\n')[0].strip()
+            except: pass
+            
+            # Timestamp
+            try:
+                time_el = element.find_element(By.XPATH, ".//span[contains(text(), 'ago') or contains(text(), 'h') or contains(text(), 'd')]")
+                data['Timestamp'] = time_el.text.strip()
+            except: pass
+            
+            # URL
+            try:
+                # Look for the '...' menu or activity link
+                # This is tricky in feed, so we try to find any link to an activity
+                link = element.find_element(By.XPATH, ".//a[contains(@href, 'activity')]")
+                href = link.get_attribute('href')
+                if href: data['Post URL'] = href.split('?')[0]
+            except: pass
+
+        except Exception as e:
+            logging.error(f"Error parsing post: {e}")
+            
+        return data
+
+    def _is_duplicate(self, new_post):
+        # Simple duplicate check based on text preview
+        for p in self.scraped_data:
+            if p['Post Text'][:50] == new_post['Post Text'][:50]:
+                return True
+        return False
+
+    # --- Helpers ---
+    def _human_typing(self, element, text):
+        element.clear()
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.1))
+
+    def _random_mouse_move(self):
+        try:
+            ActionChains(self.driver).move_by_offset(random.randint(1,10), random.randint(1,10)).perform()
+        except: pass
+    
+    def sort_posts_by_date(self, posts, order="latest"):
+        return posts # Already sorted by LinkedIn filter
+
+    def clean_export_data(self, data): return data
