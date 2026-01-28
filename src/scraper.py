@@ -425,103 +425,193 @@ class LinkedInScraper:
 
         # Extract author =========================================
         try:
-
             # Try multiple selectors for author
             author_selectors = [
                 ".//span[@dir='ltr']/span[@aria-hidden='true']",
                 ".//span[contains(@class, 'update-components-actor__title')]//span[@aria-hidden='true']",
                 ".//span[contains(@class, 'feed-shared-actor__name')]",
-                ".//a[contains(@class, 'update-components-actor__name')]//span"
+                ".//a[contains(@class, 'update-components-actor__name')]//span",
+                ".//span[contains(@class, 'update-components-actor__name')]",
+                ".//div[contains(@class, 'update-components-actor__title')]//span"
             ]
             
+            author_found = False
             for selector in author_selectors:
                 try:
-                    # use or author from posts by Xpath
                     author_element = post_element.find_element(By.XPATH, selector)
                     author_text = author_element.text.strip()
-
-                    # use condition for author 
-                    if author_text and author_text != "...":
-                        post_data['Author Name'] = author_text
-
-                        break
+                    
+                    # Filter out common non-author text
+                    if author_text and author_text != "..." and len(author_text) > 1:
+                        # Check if it's not a time indicator (like "2h", "3d")
+                        time_indicators = ['h', 'd', 'w', 'm', 'ago', 'min', 'hour', 'day', 'week', 'month']
+                        if not any(indicator in author_text.lower() for indicator in time_indicators):
+                            post_data['Author Name'] = author_text
+                            author_found = True
+                            logging.debug(f"Author found via selector '{selector}': {author_text}")
+                            break
                 except:
                     continue
             
-            # if Author name present then show name otherwise unknwn 
-            if not post_data['Author Name']:
+            # If no author found, try to get from image alt text
+            if not author_found:
+                try:
+                    author_img = post_element.find_element(By.XPATH, ".//img[contains(@class, 'update-components-actor__avatar-image')]")
+                    author_text = author_img.get_attribute("alt")
+                    if author_text and "photo" not in author_text.lower():
+                        post_data['Author Name'] = author_text.replace("photo", "").strip()
+                        author_found = True
+                        logging.debug(f"Author from alt text: {post_data['Author Name']}")
+                except:
+                    pass
+            
+            # If still no author, mark as unknown but don't log warning
+            if not author_found:
                 post_data['Author Name'] = "[Unknown Author]"
+                logging.debug(f"No author found for post index")
 
         except NoSuchElementException:
             post_data['Author Name'] = "[Unknown Author]"
+            logging.debug("Author element not found")
 
 
         # Extract timestamp =========================================
         try:
-            
-            # Multiple strategies to get timestamp
             timestamp = "[Unknown Time]"
             
-            # Strategy 1: Try to find datetime attribute
+            # Strategy 1: Try <time> tag
             try:
                 time_elements = post_element.find_elements(By.TAG_NAME, "time")
-                for time_elem in time_elements:
-                    dt = time_elem.get_attribute("datetime")
-                    if dt:
-                        timestamp = dt
-                        break
-                    else:
-                        # Try aria-label
+                if time_elements:
+                    logging.debug(f"Found {len(time_elements)} <time> elements")
+                    for time_elem in time_elements:
+                        dt = time_elem.get_attribute("datetime")
+                        if dt:
+                            timestamp = dt
+                            logging.info(f"✓ Timestamp via datetime: {timestamp}")
+                            break
+                        
                         aria_label = time_elem.get_attribute("aria-label")
                         if aria_label:
                             timestamp = aria_label
+                            logging.info(f"✓ Timestamp via aria-label: {timestamp}")
                             break
-                        # Try text
+                        
                         text = time_elem.text.strip()
                         if text:
                             timestamp = text
+                            logging.info(f"✓ Timestamp via time.text: {timestamp}")
                             break
-            except:
-                pass
+            except Exception as e:
+                logging.debug(f"Strategy 1 error: {e}")
             
-            # Strategy 2: Look for relative time text
+            # Strategy 2: Look for ANY span in the post header area
             if timestamp == "[Unknown Time]":
                 try:
-                    # Common LinkedIn timestamp patterns
-                    time_patterns = [
-                        ".//span[contains(@class, 'update-components-actor__sub-description')]",
-                        ".//span[contains(@class, 'feed-shared-actor__sub-description')]",
-                        ".//span[contains(text(), 'ago')]",
-                        ".//span[contains(text(), 'day')]",
-                        ".//span[contains(text(), 'week')]",
-                        ".//span[contains(text(), 'month')]",
-                        ".//span[contains(text(), 'hour')]",
-                        ".//span[contains(text(), 'minute')]"
+                    # Get ALL spans from the header
+                    header_spans = post_element.find_elements(By.XPATH, ".//div[contains(@class, 'update-components-actor') or contains(@class, 'feed-shared-actor')]//span")
+                    
+                    logging.debug(f"Found {len(header_spans)} spans in header area")
+                    
+                    for span in header_spans:
+                        text = span.text.strip()
+                        
+                        # Look for common time indicators
+                        if text and len(text) < 50 and any(indicator in text.lower() for indicator in 
+                            ['ago', 'min', 'hour', 'day', 'week', 'month', 'h', 'd', 'w', 'm', 'now', 'edited']):
+                            
+                            # Additional validation - check if it matches time pattern
+                            import re
+                            if re.search(r'\d+\s*(min|hour|day|week|month|h|d|w|m)', text, re.IGNORECASE) or 'ago' in text.lower() or 'now' in text.lower():
+                                timestamp = text
+                                logging.info(f"✓ Timestamp via header span: {timestamp}")
+                                break
+                
+                except Exception as e:
+                    logging.debug(f"Strategy 2 error: {e}")
+            
+            # Strategy 3: Check data attributes
+            if timestamp == "[Unknown Time]":
+                try:
+                    # Check if post element has data-urn or other attributes with date info
+                    all_with_data = post_element.find_elements(By.XPATH, ".//*[@data-*]")
+                    for elem in all_with_data[:10]:  # Check first 10
+                        attrs = self.driver.execute_script('return arguments[0].attributes', elem)
+                        for attr in attrs:
+                            if 'time' in attr['name'].lower() or 'date' in attr['name'].lower():
+                                val = attr['value']
+                                if val:
+                                    timestamp = val
+                                    logging.info(f"✓ Timestamp via data attribute {attr['name']}: {timestamp}")
+                                    break
+                        if timestamp != "[Unknown Time]":
+                            break
+                except Exception as e:
+                    logging.debug(f"Strategy 3 error: {e}")
+            
+            # Strategy 4: Look for text with numbers followed by time units
+            if timestamp == "[Unknown Time]":
+                try:
+                    import re
+                    # Get entire post element text
+                    all_text = post_element.text
+                    
+                    # Pattern for timestamps: "2h", "3d", "1w", "45m", "2 hours ago", etc.
+                    patterns = [
+                        r'\d+\s*(?:seconds?|secs?|s)\s+ago',
+                        r'\d+\s*(?:minutes?|mins?|m)\s+ago',
+                        r'\d+\s*(?:hours?|hrs?|h)\s+ago',
+                        r'\d+\s*(?:days?|d)\s+ago',
+                        r'\d+\s*(?:weeks?|wks?|w)\s+ago',
+                        r'\d+\s*(?:months?|mo)\s+ago',
+                        r'\d+\s*(?:years?|yrs?|y)\s+ago',
+                        r'\d+m\b',  # 33m
+                        r'\d+h\b',  # 2h
+                        r'\d+d\b',  # 3d
+                        r'\d+w\b',  # 1w
+                        r'just now',
+                        r'now'
                     ]
                     
-                    for pattern in time_patterns:
-                        try:
-                            time_elem = post_element.find_element(By.XPATH, pattern)
-                            time_text = time_elem.text.strip()
-                            if time_text and len(time_text) < 50:  # Reasonable length
-                                timestamp = time_text
-                                break
-                        except:
-                            continue
-                except:
-                    pass
+                    for pattern in patterns:
+                        match = re.search(pattern, all_text, re.IGNORECASE)
+                        if match:
+                            timestamp = match.group(0)
+                            logging.info(f"✓ Timestamp via regex on full text: {timestamp}")
+                            break
+                except Exception as e:
+                    logging.debug(f"Strategy 4 error: {e}")
+            
+            # Strategy 5: Last resort - dump first few elements to see structure
+            if timestamp == "[Unknown Time]":
+                try:
+                    logging.debug(f"=== Debugging post by {post_data.get('Author Name', 'Unknown')} ===")
+                    logging.debug(f"Post text preview: {post_data.get('Post Text', '')[:100]}")
+                    
+                    # Get outer HTML of header to see structure
+                    try:
+                        header_elem = post_element.find_element(By.XPATH, ".//div[contains(@class, 'update-components-actor') or contains(@class, 'feed-shared-actor')]")
+                        header_html = header_elem.get_attribute('outerHTML')[:500]  # First 500 chars
+                        logging.debug(f"Header HTML: {header_html}")
+                    except:
+                        pass
+                    
+                except Exception as e:
+                    logging.debug(f"Debug dump error: {e}")
             
             post_data['Timestamp'] = timestamp
-            
-            # Extract date for sorting
             post_data['Date_For_Sorting'] = self._extract_date_for_sorting(timestamp)
-        
+            
+            # Only log warning for posts with known authors
+            if timestamp == "[Unknown Time]" and post_data.get('Author Name') != "[Unknown Author]":
+                logging.warning(f"No timestamp found for post by {post_data.get('Author Name', 'Unknown')}")
+            elif timestamp == "[Unknown Time]":
+                logging.debug(f"No timestamp found for post by unknown author")
         
         except Exception as e:
-            logging.debug(f"Error extracting error: {e}")
+            logging.error(f"Error extracting timestamp: {e}")
             post_data['Timestamp'] = "[Unknown Time]"
             post_data['Date_For_Sorting'] = None
-
 
         #  post URL ==============================================
         try:
@@ -591,64 +681,118 @@ class LinkedInScraper:
     # ================================================================================
 
     def extract_post_elements(self):
-
         """Extracts posts from the loaded page and adds them to scraped_data."""
-
-        # logging information when extraction start 
+        
         logging.info("Starting post element extraction...")
-
-        # use try for delay for the next posts extraction 
+        
         try:
             WebDriverWait(self.driver, 15).until(EC.presence_of_element_located(self.POST_CONTAINER))
-
-        # if no extraction then show logging warning
+            
         except TimeoutException:
             logging.warning("No post elements found. Check page content.")
-
             return []
-
-        # for posts element extracton 
+        
+        # Get all post elements
         post_elements = self.driver.find_elements(*self.POST_CONTAINER)
-
-        # loging information when extraction complete
         logging.info(f"Found {len(post_elements)} potential post elements.")
-
-        # now selection of category (mention in config file )
+        
         selected_category = getattr(self, "category", "Posts")
-
-        # start element extraction 0 to 50 
-        for i, post_element in enumerate(post_elements[:50]):
-
+        
+        # ============================================================
+        # **NEW: Filter duplicate post elements by data-urn FIRST**
+        # ============================================================
+        unique_post_elements = []
+        seen_urns = set()
+        
+        for element in post_elements:
+            try:
+                # Try to get unique identifier for post
+                urn = element.get_attribute("data-urn")
+                if urn:
+                    if urn not in seen_urns:
+                        seen_urns.add(urn)
+                        unique_post_elements.append(element)
+                    else:
+                        logging.debug(f"Skipping duplicate element by data-urn: {urn}")
+                        continue
+                else:
+                    # If no URN, use outerHTML hash as identifier
+                    html_hash = hash(element.get_attribute('outerHTML')[:500])  # First 500 chars
+                    if html_hash not in seen_urns:
+                        seen_urns.add(html_hash)
+                        unique_post_elements.append(element)
+                    else:
+                        logging.debug("Skipping duplicate element by HTML hash")
+                        continue
+                        
+            except Exception as e:
+                logging.debug(f"Error checking element uniqueness: {e}")
+                unique_post_elements.append(element)
+        
+        logging.info(f"Unique post elements after filtering: {len(unique_post_elements)}")
+        # ============================================================
+        
+        # Temporary storage to track processed posts
+        processed_post_urls = set()
+        processed_post_texts = set()
+        
+        for i, post_element in enumerate(unique_post_elements[:50]):  # Changed to unique_post_elements
             try:
                 post_data = self._parse_single_post(post_element)
-
+                
+                # ============================================================
+                # **NEW: Skip posts with [Unknown Author] immediately**
+                # ============================================================
+                if post_data.get('Author Name') == "[Unknown Author]":
+                    logging.debug(f"Skipping post with Unknown Author (index {i})")
+                    continue
+                # ============================================================
+                
                 # Ensure Category key exists
                 post_data['Category'] = post_data.get('Category', selected_category)
-
+                
                 # Remove duplicate lowercase 'category' key if exists
                 if 'category' in post_data:
                     del post_data['category']
-
+                
                 # Filter posts by category
                 if post_data['Category'].lower() != selected_category.lower():
                     continue
                 
-                # use condition for duplicate posts data 
+                # Check for duplicates using URL and text
+                post_url = post_data.get('Post URL', '')
+                post_text = post_data.get('Post Text', '')
+                
+                # Skip if no text or empty text
+                if not post_text or post_text == "[No Text Content Found]" or post_text.strip() == "":
+                    logging.debug(f"Skipping post with no text (index {i})")
+                    continue
+                
+                # Skip if already processed by URL
+                if post_url and post_url != "[No URL Found]":
+                    if post_url in processed_post_urls:
+                        logging.debug(f"Skipping duplicate post (URL): {post_url}")
+                        continue
+                    processed_post_urls.add(post_url)
+                
+                # Also check text to avoid duplicates
+                text_hash = hash(post_text[:200])  # Increased to 200 chars for better comparison
+                if text_hash in processed_post_texts:
+                    logging.debug(f"Skipping duplicate post (text): {post_text[:80]}...")
+                    continue
+                processed_post_texts.add(text_hash)
+                
+                # Use existing duplicate check
                 if post_data['Post Text'] and not self._is_duplicate(post_data):
                     self.scraped_data.append(post_data)
-
-                    # logging information of getting posts data 
-                    logging.debug(f"Post {i+1} added: {post_data.get('Author Name', 'Unknown')}")
+                    logging.info(f"✓ Post {i+1} added: {post_data.get('Author Name', 'Unknown')} - {post_data.get('Timestamp', 'No time')}")
+                    
             except Exception as e:
-                # if not post data get then show warning 
-                logging.error(f"Error processing post {i+1}: {e}")
+                logging.error(f"Error processing post {i+1}: {e}", exc_info=True)
                 continue
         
-        # if all are working then ending info 
         logging.info(f"Extraction complete. Total unique posts: {len(self.scraped_data)}")
-
         return self.scraped_data
-
     # ===============================================================================
 
     # ---------------- HUMAN MIMICRY ----------------
@@ -1324,54 +1468,3 @@ class LinkedInScraper:
         return sort_text
     
     # ===============================================================================
-    
-    def _get_sort_text_for_category(self, category: str, sort_order: str) -> str:
-        """
-        Returns the correct sort option text based on category and sort order.
-        
-        LinkedIn uses different sort terminology for different categories:
-        - Posts: "Latest" vs "Top match"
-        - Jobs: "Most recent" vs "Most relevant"
-        - People: "Recently added" vs "Most relevant"
-        - Companies: "Most recent" vs "Most relevant"
-        
-        Args:
-            category (str): Category name (Posts, Jobs, People, Companies)
-            sort_order (str): Sort order from config ("latest" or "oldest")
-        
-        Returns:
-            str: LinkedIn's actual sort option text for the given category
-        
-        Example:
-            >>> _get_sort_text_for_category("Jobs", "latest")
-            "Most recent"
-            >>> _get_sort_text_for_category("Posts", "latest")
-            "Latest"
-        """
-        # Define category-specific sort text mappings
-        sort_mappings = {
-            "Posts": {
-                "latest": "Latest",
-                "oldest": "Top match"
-            },
-            "Jobs": {
-                "latest": "Most recent",
-                "oldest": "Most relevant"
-            },
-            "People": {
-                "latest": "Recently added",
-                "oldest": "Most relevant"
-            },
-            "Companies": {
-                "latest": "Most recent",
-                "oldest": "Most relevant"
-            }
-        }
-        
-        # Get category-specific mapping (default to Posts if not found)
-        category_map = sort_mappings.get(category, sort_mappings["Posts"])
-        
-        # Get sort text (default to "latest" option if sort_order not found)
-        sort_text = category_map.get(sort_order.lower(), category_map["latest"])
-        
-        return sort_text
