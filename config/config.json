@@ -1,16 +1,21 @@
 {
   "scraper_settings": {
     "base_url": "https://www.linkedin.com/login",
-    "search_query": "Python intern",
+    "search_query": "#dubaijobs",
     "keywords": ["Python", "intern", "developer"],
-    "scroll_limit": 5,
+    "scroll_limit": 10,
     "max_scroll_attempts": 50,
-    "category":   "Posts",
+    "category": "Posts",
     "delay_range": [1.5, 4.0],
+    "delay": {
+      "min_sec": 1.0,
+      "max_sec": 3.0
+    },
     "sort_by_date": "latest", 
-    "time_filter": "past_hour" 
+    "time_filter": "Past 24 hours" 
   },
   "human_mimicry": {
+    "enable_mouse_movement": true,
     "mouse_movement": true,
     "mouse_move_x_range": [-20, 20],
     "mouse_move_y_range": [-20, 20],
@@ -26,6 +31,5 @@
     "https": "",
     "username": "",
     "password": ""
- 
   }
 }

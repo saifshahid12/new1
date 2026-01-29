@@ -241,7 +241,7 @@ class LinkedInScraper:
 
         try:
             # Wait until search input is present
-            search_box = WebDriverWait(self.driver, 20).until(
+            search_box = WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.XPATH, "//input[contains(@placeholder,'Search')]"))
             )
 
@@ -258,7 +258,8 @@ class LinkedInScraper:
                 EC.presence_of_element_located(self.POST_CONTAINER)
             )
 
-           
+            # Add this line with shorter delay
+            self._random_delay(2, 3)
 
         except TimeoutException:
 
@@ -1132,7 +1133,7 @@ class LinkedInScraper:
 
         try:
             # Wait for page to load after search
-            self._random_delay(5, 7)
+            self._random_delay(2, 3)
 
             # Click category button using exact text match
             category_button = WebDriverWait(self.driver, 20).until(
@@ -1143,7 +1144,7 @@ class LinkedInScraper:
             self.driver.execute_script("arguments[0].click();", category_button)
 
             logging.info(f"Category selected successfully: {category}")
-            self._random_delay(4, 6)
+            self._random_delay(2, 3)
 
         except Exception as e:
             logging.warning(f"Could not select category '{category}': {e}")
@@ -1156,7 +1157,7 @@ class LinkedInScraper:
                 )
                 self.driver.execute_script("arguments[0].click();", category_button)
                 logging.info(f"Category selected with alternative method: {category}")
-                self._random_delay(4, 6)
+                self._random_delay(2, 3)
             except Exception as e2:
                 logging.error(f"Failed to select category with both methods: {e2}")
 
@@ -1190,7 +1191,7 @@ class LinkedInScraper:
             
             # Scroll to top to ensure button is visible
             self.driver.execute_script("window.scrollTo(0, 0);")
-            self._random_delay(2, 3)
+            self._random_delay(1, 2)
             
             # Get category from config to determine correct sort options
             category = self.config["scraper_settings"].get("category", "Posts")
@@ -1227,7 +1228,7 @@ class LinkedInScraper:
             logging.info("'All filters' panel opened")
             
             # Wait for filter panel to fully load
-            self._random_delay(4, 6)
+            self._random_delay(2, 3)
             
             # Verify panel is open by checking for "Show results" button
             try:
@@ -1284,10 +1285,13 @@ class LinkedInScraper:
             # Step 3: Apply "Date posted" filter
             # =====================================================================
             time_filter = self.config["scraper_settings"].get("time_filter", "none")
-            
-            if time_filter.lower() != "none":
-                logging.info(f"Applying Date posted: {time_filter}")
-                
+            logging.info(f"Time filter from config: '{time_filter}'")
+
+            if time_filter.lower() == "none":
+                logging.info(" Time filter is 'none' - SKIPPING date posted filter")
+            else:
+                logging.info(f"✓ Applying Date posted filter: {time_filter}") 
+
                 # Map config value to LinkedIn's actual text
                 time_map = {
                     "past_hour": "Past 24 hours",
@@ -1296,36 +1300,40 @@ class LinkedInScraper:
                     "past_month": "Past month"
                 }
                 
-                date_text = time_map.get(time_filter.lower(), "Past 24 hours")
+                date_text = time_map.get(time_filter.lower())
+                if not date_text:
+                    logging.warning(f" Invalid time_filter value: '{time_filter}'. Valid options: past_hour, past_24_hours, past_week, past_month, none")
+                    logging.info("⏭ SKIPPING date posted filter due to invalid value")
+                else:
+                    
+                    try:
+                        # Multiple strategies to find and click date filter
+                        date_xpaths = [
+                            f"//label[contains(., '{date_text}')]",
+                            f"//span[text()='{date_text}']/ancestor::label",
+                            f"//span[contains(text(), '{date_text}')]/ancestor::label",
+                            f"//fieldset//label[contains(., '{date_text}')]"
+                        ]
+                        
+                        date_clicked = False
+                        for xpath in date_xpaths:
+                            try:
+                                date_element = self.driver.find_element(By.XPATH, xpath)
+                                self._human_mouse_movement(date_element, moves=1)
+                                self.driver.execute_script("arguments[0].click();", date_element)
+                                logging.info(f"Date posted '{date_text}' selected successfully")
+                                date_clicked = True
+                                self._random_delay(1, 2)
+                                break
+                            except:
+                                continue
+                        
+                        if not date_clicked:
+                            logging.warning(f"Could not select date filter '{date_text}'")
+                        
+                    except Exception as e:
+                        logging.warning(f"Error selecting date filter: {e}")
                 
-                try:
-                    # Multiple strategies to find and click date filter
-                    date_xpaths = [
-                        f"//label[contains(., '{date_text}')]",
-                        f"//span[text()='{date_text}']/ancestor::label",
-                        f"//span[contains(text(), '{date_text}')]/ancestor::label",
-                        f"//fieldset//label[contains(., '{date_text}')]"
-                    ]
-                    
-                    date_clicked = False
-                    for xpath in date_xpaths:
-                        try:
-                            date_element = self.driver.find_element(By.XPATH, xpath)
-                            self._human_mouse_movement(date_element, moves=1)
-                            self.driver.execute_script("arguments[0].click();", date_element)
-                            logging.info(f"Date posted '{date_text}' selected successfully")
-                            date_clicked = True
-                            self._random_delay(1, 2)
-                            break
-                        except:
-                            continue
-                    
-                    if not date_clicked:
-                        logging.warning(f"Could not select date filter '{date_text}'")
-                    
-                except Exception as e:
-                    logging.warning(f"Error selecting date filter: {e}")
-            
             # =====================================================================
             # Step 4: Click "Show results" button and wait for page reload
             # =====================================================================
@@ -1372,7 +1380,7 @@ class LinkedInScraper:
                         logging.warning("URL did not change - filters may have been applied without page reload")
                     
                     # Wait for filter panel to close (indicates filter application complete)
-                    self._random_delay(3, 5)
+                    self._random_delay(2, 3)
                     
                     # Wait for new results to load based on category
                     if category.lower() == "jobs":
@@ -1413,7 +1421,7 @@ class LinkedInScraper:
                             logging.warning(f"{category} results may not have loaded")
                     
                     # Final wait to ensure page is stable
-                    self._random_delay(4, 6)
+                    self._random_delay(2, 3)
                     
                     # Scroll to top of results to prepare for scrolling
                     self.driver.execute_script("window.scrollTo(0, 0);")

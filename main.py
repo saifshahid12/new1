@@ -96,16 +96,25 @@ def main():
         # EMAIL EXTRACTION ADDED HERE (BEFORE SORTING) - DRY FIXED
         # =================================================================
         # Use single shared utility function from utils.py to avoid duplicate regex
+        posts_with_emails = []
         for post in scraped_data:
             text = post.get("Post Text", "")
             if text and text != "[No Text Content Found]":
-                emails = extract_emails_from_text(text)  # Single source of truth
-                if emails:
-                    logging.info(f"Found emails in post: {emails}")
+                emails = extract_emails_from_text(text)
+                if emails:  # Only keep posts with emails
+                    post["email"] = emails[0]
+                    post["email_count"] = len(emails)
+                    post["emails"] = emails
+                    posts_with_emails.append(post)
+                    logging.info(f"Keeping post with email(s): {emails}")
+                else:
+                    logging.debug(f"Skipping post without email")
             else:
-                post["email"] = "No text content"
-                post["email_count"] = 0
-                post["emails"] = []
+                logging.debug(f"Skipping post with no text")
+
+        scraped_data = posts_with_emails  # Replace with only email posts
+        logging.info(f"Filtered to {len(scraped_data)} posts with emails")
+# ================================================================
         # =================================================================
         # END OF EMAIL EXTRACTION
         # =================================================================
@@ -153,15 +162,15 @@ def main():
         
         # Export data (CSV + JSON)
         export_data(processed_posts, search_query, category, sort_order=sort_order)
-        logging.info("Data export completed successfully")
+        # logging.info("Data export completed successfully")
         
         # Show summary
         matched = sum(1 for p in processed_posts if p.get("keyword_matched"))
         posts_with_emails = sum(1 for p in processed_posts if p.get("email_count", 0) > 0)
         
-        print(f"\n{'='*50}")
-        print("SCRAPING COMPLETE")
-        print(f"{'='*50}")
+        # print(f"\n{'='*50}")
+        # print("SCRAPING COMPLETE")
+        # print(f"{'='*50}")
         print(f"Total posts scraped: {len(scraped_data)}")
         print(f"Posts matching '{search_query}': {matched}")
         print(f"Posts with emails found: {posts_with_emails}")
