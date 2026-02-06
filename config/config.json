@@ -12,7 +12,7 @@
       "max_sec": 3.0
     },
     "sort_by_date": "latest", 
-    "time_filter": "Past 24 hours" 
+    "time_filter": "Past_24_hours" 
   },
   "human_mimicry": {
     "enable_mouse_movement": true,

@@ -322,7 +322,7 @@ class LinkedInScraper:
                     break
 
                 # Add random delay between scroling 
-                self._random_delay(1.5, 3.5)
+                self._random_delay(1.5)
 
                 # add for output of scrolling after perfect  work 
                 try:
@@ -345,7 +345,7 @@ class LinkedInScraper:
                         # logging warniing 
                         logging.warning(f"No new content loaded for {attempts} attempts.")
 
-                    self._random_delay(2, 4)
+                    self._random_delay(1, 3)
 
                 # if all are in good work then go to else and show informtion 
                 else:
@@ -1228,7 +1228,7 @@ class LinkedInScraper:
             logging.info("'All filters' panel opened")
             
             # Wait for filter panel to fully load
-            self._random_delay(2, 3)
+            self._random_delay(1, 2)
             
             # Verify panel is open by checking for "Show results" button
             try:
