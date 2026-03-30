@@ -3,7 +3,7 @@
     "base_url": "https://www.linkedin.com/login",
     "search_query": "#dubaijobs",
     "keywords": ["Python", "intern", "developer"],
-    "scroll_limit": 10,
+    "scroll_limit": 5,
     "max_scroll_attempts": 50,
     "category": "Posts",
     "delay_range": [1.5, 4.0],

@@ -25,7 +25,6 @@ def load_config(config_path="config/config.json"):
 
 def load_credentials():
 
-    # load email and password from .env
     """Load LinkedIn credentials from .env file."""
     username = os.getenv("LINKEDIN_USERNAME")
     password = os.getenv("LINKEDIN_PASSWORD")
@@ -122,7 +121,7 @@ def export_data(data, search_query, category,timestamp=None, sort_order="none"):
     json_file = os.path.join(output_dir, f"{safe_query}_{category}_posts_{timestamp}.json")
 
     # Export CSV
-    fieldnames = ['Post Text', 'Author Name', 'Timestamp', 'Post URL', 'Category', 'keyword_matched', 'search_query', 'email','email_count', 'emails', 'llm_validation']
+    fieldnames = ['Post Text', 'Author Name', 'Timestamp', 'Post URL', 'Category', 'keyword_matched', 'search_query', 'email','email_count', 'llm_validation']
     try:
         # FIX: dynamic fieldnames
         fieldnames = set()
